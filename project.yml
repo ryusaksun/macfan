@@ -1,0 +1,54 @@
+name: MacFan
+options:
+  bundleIdPrefix: com.macfan
+  deploymentTarget:
+    macOS: "13.0"
+  minimumXcodeGenVersion: "2.38"
+
+targets:
+  MacFan:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/MacFanApp
+      - Sources/MacFanCore
+    settings:
+      base:
+        INFOPLIST_FILE: Sources/MacFanApp/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.macfan.MacFan
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 2FJFJ2WAF8
+        CODE_SIGN_IDENTITY: "Apple Development"
+        GENERATE_INFOPLIST_FILE: NO
+    frameworks:
+      - sdk: IOKit.framework
+      - sdk: ServiceManagement.framework
+    dependencies:
+      - target: MacFanHelper
+    postBuildScripts:
+      - name: "Embed Helper and LaunchDaemon plist"
+        script: |
+          mkdir -p "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons"
+          cp "${SRCROOT}/Sources/MacFanHelper/launchd.plist" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons/com.macfan.helper.plist"
+          cp "${BUILT_PRODUCTS_DIR}/MacFanHelper" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"
+          /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --timestamp=none "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"
+
+  MacFanHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/MacFanHelper
+      - Sources/MacFanCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macfan.helper
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 2FJFJ2WAF8
+        CODE_SIGN_IDENTITY: "Apple Development"
+        SKIP_INSTALL: YES
+    frameworks:
+      - sdk: IOKit.framework
