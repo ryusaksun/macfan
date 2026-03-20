@@ -23,13 +23,23 @@ struct ProfileEditView: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .frame(width: 60, alignment: .leading)
-                Picker("", selection: conditionBinding) {
+                Picker("", selection: conditionType) {
                     Text("Always").tag(0)
                     Text("Charging").tag(1)
                     Text("On Battery").tag(2)
-                    Text("Battery < 20%").tag(3)
+                    Text("Battery Below").tag(3)
                 }
                 .labelsHidden()
+
+                if case .batteryBelow(let pct) = profile.condition {
+                    Picker("", selection: batteryThreshold) {
+                        ForEach([10, 20, 30, 40, 50], id: \.self) { val in
+                            Text("\(val)%").tag(val)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 65)
+                }
             }
 
             Divider()
@@ -82,7 +92,7 @@ struct ProfileEditView: View {
         .padding(20)
     }
 
-    private var conditionBinding: Binding<Int> {
+    private var conditionType: Binding<Int> {
         Binding(
             get: {
                 switch profile.condition {
@@ -102,6 +112,18 @@ struct ProfileEditView: View {
             }
         )
     }
+
+    private var batteryThreshold: Binding<Int> {
+        Binding(
+            get: {
+                if case .batteryBelow(let pct) = profile.condition { return pct }
+                return 20
+            },
+            set: { val in
+                profile.condition = .batteryBelow(val)
+            }
+        )
+    }
 }
 
 struct RuleRow: View {
@@ -116,7 +138,8 @@ struct RuleRow: View {
 
             TextField("", value: $rule.tempThreshold, format: .number)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 50)
+                .frame(width: 45)
+                .multilineTextAlignment(.center)
                 .onChange(of: rule.tempThreshold) { newValue in
                     rule.tempThreshold = max(0, min(130, newValue))
                 }
@@ -127,7 +150,8 @@ struct RuleRow: View {
 
             TextField("", value: $rule.fanSpeedPercent, format: .number)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 50)
+                .frame(width: 45)
+                .multilineTextAlignment(.center)
                 .onChange(of: rule.fanSpeedPercent) { newValue in
                     rule.fanSpeedPercent = max(0, min(100, newValue))
                 }

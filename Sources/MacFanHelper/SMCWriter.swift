@@ -5,12 +5,27 @@ final class SMCWriter: NSObject, HelperProtocol {
     private let smc = SMCKit()
     private var isOpen = false
     private let lock = NSLock()
+    private var ftstAvailable: Bool?
 
     private func ensureOpen() throws {
         if !isOpen {
             try smc.open()
             isOpen = true
         }
+    }
+
+    /// 检测 Ftst 键是否存在（缓存结果）
+    private func isFtstAvailable() -> Bool {
+        if let cached = ftstAvailable { return cached }
+        let available: Bool
+        if let info = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.forceMode)),
+           info.dataSize > 0 {
+            available = true
+        } else {
+            available = false
+        }
+        ftstAvailable = available
+        return available
     }
 
     /// 检测可用的模式键 (F0md 小写 vs F0Md 大写)
@@ -50,11 +65,10 @@ final class SMCWriter: NSObject, HelperProtocol {
                 return (false, "未找到风扇模式键")
             }
 
-            // 尝试 Ftst (旧款需要)
-            let ftstInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.forceMode))
-            if let info = ftstInfo, info.dataSize > 0 {
+            // 尝试 Ftst (旧款需要，M5 Pro 无此键会跳过)
+            if isFtstAvailable() {
                 try? smc.writeUInt8(SMCKeys.forceMode, value: 1)
-                usleep(500_000) // 0.5s，避免长时间阻塞
+                usleep(500_000)
             }
 
             // 重试设置手动模式
@@ -109,9 +123,8 @@ final class SMCWriter: NSObject, HelperProtocol {
                 return (false, "无效的风扇 ID: \(fanID)")
             }
 
-            // 清除 Ftst 强制模式（旧款 Mac 需要）
-            let ftstInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.forceMode))
-            if let info = ftstInfo, info.dataSize > 0 {
+            // 清除 Ftst 强制模式（旧款 Mac 需要，M5 Pro 无此键会跳过）
+            if isFtstAvailable() {
                 try? smc.writeUInt8(SMCKeys.forceMode, value: 0)
             }
 
@@ -175,8 +188,10 @@ final class SMCWriter: NSObject, HelperProtocol {
             try ensureOpen()
             let fanCount = Int(try smc.readUInt8(SMCKeys.fanCount))
 
-            // 关闭 Ftst
-            try? smc.writeUInt8(SMCKeys.forceMode, value: 0)
+            // 关闭 Ftst（M5 Pro 无此键会跳过）
+            if isFtstAvailable() {
+                try? smc.writeUInt8(SMCKeys.forceMode, value: 0)
+            }
 
             // 恢复每个风扇自动模式
             for i in 0..<fanCount {
