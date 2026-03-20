@@ -60,11 +60,12 @@ public final class FanMonitor: ObservableObject {
     @Published public var battery: BatteryInfo = BatteryInfo()
     @Published public var isConnected = false
     @Published public var lastError: String?
+    @Published public var fanResetCounter: Int = 0
 
     private let smc = SMCKit()
     private let batteryService = BatteryService()
     private var timer: Timer?
-    private let interval: TimeInterval
+    private var interval: TimeInterval
 
     /// 已发现的有效温度键（首次扫描后缓存）
     private var discoveredTempKeys: [(key: String, name: String)] = []
@@ -83,6 +84,14 @@ public final class FanMonitor: ObservableObject {
     }
 
     public func start() {
+        if isConnected {
+            if timer == nil {
+                scheduleTimer()
+            }
+            refresh()
+            return
+        }
+
         do {
             try smc.open()
             isConnected = true
@@ -92,11 +101,7 @@ public final class FanMonitor: ObservableObject {
             discoverSensors()
             refresh()
 
-            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    self?.refresh()
-                }
-            }
+            scheduleTimer()
         } catch {
             isConnected = false
             lastError = "\(error)"
@@ -106,6 +111,8 @@ public final class FanMonitor: ObservableObject {
     public func stop() {
         timer?.invalidate()
         timer = nil
+        xpcConnection?.invalidate()
+        xpcConnection = nil
         smc.close()
         isConnected = false
     }
@@ -169,6 +176,7 @@ public final class FanMonitor: ObservableObject {
     /// 清除配置评估状态
     public func clearProfileState() {
         lastAppliedPercent = nil
+        profileManager?.resetEvaluationState()
     }
 
     /// 所有风扇全速
@@ -195,6 +203,7 @@ public final class FanMonitor: ObservableObject {
     public func resetAllFans() {
         controlMessage = nil
         controlError = nil
+        fanResetCounter += 1
 
         guard let helper = getHelper() else {
             controlError = "Helper 未安装"
@@ -211,7 +220,46 @@ public final class FanMonitor: ObservableObject {
         }
     }
 
+    /// 恢复单个风扇自动控制
+    public func resetFan(fanID: Int) {
+        controlMessage = nil
+        controlError = nil
+
+        guard let helper = getHelper() else {
+            controlError = "Helper 未安装"
+            return
+        }
+        helper.resetFan(fanID: fanID) { [weak self] success, msg in
+            Task { @MainActor in
+                if success {
+                    self?.controlMessage = msg
+                } else {
+                    self?.controlError = msg
+                }
+            }
+        }
+    }
+
     // MARK: - 内部
+
+    private func scheduleTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+            }
+        }
+    }
+
+    public func updateInterval(_ newInterval: TimeInterval) {
+        let clampedInterval = max(1.0, newInterval)
+        guard abs(interval - clampedInterval) >= 0.01 else { return }
+
+        interval = clampedInterval
+        if isConnected {
+            scheduleTimer()
+        }
+    }
 
     private func discoverSensors() {
         discoveredTempKeys = []
@@ -219,7 +267,7 @@ public final class FanMonitor: ObservableObject {
         for (key, name) in SMCKeys.temperatureKeys {
             do {
                 let temp = try smc.readTemperature(key)
-                if temp >= 0 && temp < 130 {
+                if temp > 0 && temp < 130 {
                     discoveredTempKeys.append((key, name))
                 }
             } catch {

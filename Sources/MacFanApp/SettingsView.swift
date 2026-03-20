@@ -2,6 +2,7 @@ import SwiftUI
 import ServiceManagement
 
 struct SettingsView: View {
+    @ObservedObject var monitor: FanMonitor
     @AppStorage("refreshInterval") private var refreshInterval: Double = 2.0
     @AppStorage("showTempInMenuBar") private var showTempInMenuBar: Bool = false
     @AppStorage("autoRestoreOnQuit") private var autoRestoreOnQuit: Bool = true
@@ -35,6 +36,13 @@ struct SettingsView: View {
                 .labelsHidden()
                 .frame(width: 80)
             }
+            .onChange(of: refreshInterval) { newValue in
+                monitor.updateInterval(newValue)
+            }
+
+            // 菜单栏显示温度
+            Toggle("Show temperature in menu bar", isOn: $showTempInMenuBar)
+                .font(.caption)
 
             // 退出时恢复
             Toggle("Restore auto mode on quit", isOn: $autoRestoreOnQuit)

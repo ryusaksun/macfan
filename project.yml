@@ -34,7 +34,11 @@ targets:
           mkdir -p "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons"
           cp "${SRCROOT}/Sources/MacFanHelper/launchd.plist" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons/com.macfan.helper.plist"
           cp "${BUILT_PRODUCTS_DIR}/MacFanHelper" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"
-          /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --timestamp=none "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"
+          if [ "${CODE_SIGNING_ALLOWED}" = "YES" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY}" ]; then
+            /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --timestamp=none "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"
+          else
+            echo "warning: Helper 未签名，XPC 连接的 team ID 校验将失败，风扇控制功能不可用"
+          fi
 
   MacFanHelper:
     type: tool

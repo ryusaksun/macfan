@@ -6,6 +6,9 @@ import Foundation
     /// 设置指定风扇的目标转速
     func setFanSpeed(fanID: Int, rpm: Double, withReply reply: @escaping (Bool, String) -> Void)
 
+    /// 恢复指定风扇为自动控制
+    func resetFan(fanID: Int, withReply reply: @escaping (Bool, String) -> Void)
+
     /// 所有风扇全速
     func setAllFansMax(withReply reply: @escaping (Bool, String) -> Void)
 

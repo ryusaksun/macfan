@@ -99,9 +99,43 @@ final class SMCWriter: NSObject, HelperProtocol {
         }
     }
 
+    /// 内部同步实现：恢复单个风扇自动控制（调用方需持有 lock）
+    private func resetFanInternal(fanID: Int) -> (Bool, String) {
+        do {
+            try ensureOpen()
+
+            let fanCount = Int(try smc.readUInt8(SMCKeys.fanCount))
+            guard fanID >= 0 && fanID < fanCount else {
+                return (false, "无效的风扇 ID: \(fanID)")
+            }
+
+            // 清除 Ftst 强制模式（旧款 Mac 需要）
+            let ftstInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.forceMode))
+            if let info = ftstInfo, info.dataSize > 0 {
+                try? smc.writeUInt8(SMCKeys.forceMode, value: 0)
+            }
+
+            guard let modeKey = detectModeKey(fanID: fanID) else {
+                return (false, "未找到风扇模式键")
+            }
+
+            try smc.writeUInt8(modeKey, value: 0)
+            return (true, "风扇 \(fanID) 已恢复自动控制")
+        } catch {
+            return (false, "\(error)")
+        }
+    }
+
     func setFanSpeed(fanID: Int, rpm: Double, withReply reply: @escaping (Bool, String) -> Void) {
         lock.lock()
         let result = setFanSpeedInternal(fanID: fanID, rpm: rpm)
+        lock.unlock()
+        reply(result.0, result.1)
+    }
+
+    func resetFan(fanID: Int, withReply reply: @escaping (Bool, String) -> Void) {
+        lock.lock()
+        let result = resetFanInternal(fanID: fanID)
         lock.unlock()
         reply(result.0, result.1)
     }

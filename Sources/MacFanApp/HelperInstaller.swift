@@ -9,7 +9,7 @@ enum HelperInstaller {
 
     /// 检查 Helper 是否已安装
     static var isInstalled: Bool {
-        FileManager.default.fileExists(atPath: helperInstallPath)
+        FileManager.default.fileExists(atPath: helperInstallPath) && isRunning
     }
 
     /// 检查 daemon 是否正在运行
@@ -20,9 +20,13 @@ enum HelperInstaller {
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
-        try? task.run()
-        task.waitUntilExit()
-        return task.terminationStatus == 0
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     /// 安装 Helper（弹出一次密码框）
@@ -55,10 +59,11 @@ enum HelperInstaller {
         </plist>
         """
 
-        // 构建安装脚本
+        // 构建安装脚本（转义单引号防止路径注入）
+        let safeHelperSrc = helperSrc.replacingOccurrences(of: "'", with: "'\\''")
         let script = """
         mkdir -p /Library/PrivilegedHelperTools && \
-        cp '\(helperSrc)' '\(helperInstallPath)' && \
+        cp '\(safeHelperSrc)' '\(helperInstallPath)' && \
         chmod 755 '\(helperInstallPath)' && \
         cat > '\(plistInstallPath)' << 'PLISTEOF'
         \(plistContent)
@@ -68,11 +73,7 @@ enum HelperInstaller {
         echo 'OK'
         """
 
-        let appleScript = NSAppleScript(source:
-            "do shell script \"\(script.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with administrator privileges"
-        )
-
-        // 更简单的方式：直接写临时脚本文件
+        // 直接写临时脚本文件，避免拼接复杂的转义命令
         let tmpScript = NSTemporaryDirectory() + "macfan_install_\(UUID().uuidString).sh"
         do {
             try script.write(toFile: tmpScript, atomically: true, encoding: .utf8)
@@ -99,10 +100,14 @@ enum HelperInstaller {
         }
 
         let output = result?.stringValue ?? ""
-        if output.contains("OK") {
+        guard output.contains("OK") else {
+            return (false, output.isEmpty ? "安装未返回成功标记" : output)
+        }
+
+        if isInstalled {
             return (true, "Helper 已安装为系统服务")
         }
-        return (true, "安装完成")
+        return (false, "Helper 已复制，但系统服务未成功启动")
     }
 
     /// 卸载 Helper

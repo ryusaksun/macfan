@@ -42,6 +42,9 @@ public final class ProfileManager: ObservableObject {
     public func updateProfile(_ profile: FanProfile) {
         if let idx = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[idx] = profile
+            if activeProfileID == profile.id {
+                resetEvaluationState()
+            }
             save()
         }
     }
@@ -50,13 +53,19 @@ public final class ProfileManager: ObservableObject {
         profiles.removeAll { $0.id == id }
         if activeProfileID == id {
             activeProfileID = nil
+            resetEvaluationState()
         }
         save()
     }
 
     public func setActive(_ id: UUID?) {
         activeProfileID = id
+        resetEvaluationState()
         save()
+    }
+
+    public func resetEvaluationState() {
+        lastMatchedRuleIndex = nil
     }
 
     // MARK: - 持久化
@@ -103,7 +112,7 @@ public final class ProfileManager: ObservableObject {
         hysteresis: Double = 3.0
     ) -> Double? {
         guard let profile = activeProfile, profile.isEnabled else {
-            lastMatchedRuleIndex = nil
+            resetEvaluationState()
             return nil
         }
 
@@ -112,11 +121,20 @@ public final class ProfileManager: ObservableObject {
         case .always:
             break
         case .charging:
-            guard battery.isCharging else { return nil }
+            guard battery.isCharging else {
+                resetEvaluationState()
+                return nil
+            }
         case .onBattery:
-            guard !battery.isPluggedIn else { return nil }
+            guard !battery.isPluggedIn else {
+                resetEvaluationState()
+                return nil
+            }
         case .batteryBelow(let threshold):
-            guard battery.percentage < threshold else { return nil }
+            guard battery.percentage < threshold else {
+                resetEvaluationState()
+                return nil
+            }
         }
 
         // 按温度阈值从高到低排序
@@ -139,7 +157,7 @@ public final class ProfileManager: ObservableObject {
         }
 
         // 没有匹配的规则，返回自动
-        lastMatchedRuleIndex = nil
+        resetEvaluationState()
         return nil
     }
 }

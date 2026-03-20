@@ -12,27 +12,22 @@ final class HelperDelegate: NSObject, NSXPCListenerDelegate {
         let attrs = [kSecGuestAttributePid: pid] as CFDictionary
         guard SecCodeCopyGuestWithAttributes(nil, attrs, [], &code) == errSecSuccess,
               let secCode = code else {
+            NSLog("MacFanHelper: 无法获取 PID \(pid) 的 SecCode")
             return false
         }
 
-        // 验证签名有效
-        guard SecCodeCheckValidity(secCode, [], nil) == errSecSuccess else {
+        // 使用 SecRequirement 验证签名和 team ID（比手动解析 signingInfo 更稳健）
+        let reqString = "anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\"" as CFString
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(reqString, [], &requirement) == errSecSuccess,
+              let req = requirement else {
+            NSLog("MacFanHelper: 无法创建签名校验规则")
             return false
         }
 
-        // 获取 StaticCode 用于提取签名信息
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(secCode, [], &staticCode) == errSecSuccess,
-              let secStaticCode = staticCode else {
-            return false
-        }
-
-        // 提取签名信息，检查团队 ID
-        var info: CFDictionary?
-        guard SecCodeCopySigningInformation(secStaticCode, [], &info) == errSecSuccess,
-              let signingInfo = info as? [String: Any],
-              let teamId = signingInfo["teamid"] as? String,
-              teamId == teamID else {
+        let status = SecCodeCheckValidity(secCode, [], req)
+        if status != errSecSuccess {
+            NSLog("MacFanHelper: PID \(pid) 签名校验失败: \(status)")
             return false
         }
 
