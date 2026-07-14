@@ -227,7 +227,11 @@ struct Set: ParsableCommand {
 
         print("设置风扇 \(fanID) 转速为 \(rpm) RPM...")
 
-        try setFanSpeed(smc: smc, fanID: fanID, targetRPM: Double(rpm))
+        let result = FanControlEngine(smc: smc).setFanSpeed(fanID: fanID, rpm: Double(rpm))
+        guard result.success else {
+            print("❌ \(result.message)")
+            throw ExitCode.failure
+        }
 
         let actual = try smc.readFanSpeed(SMCKeys.fanActualSpeed(fanID))
         print("✅ 设置完成！当前转速: \(String(format: "%.0f", actual)) RPM")
@@ -256,10 +260,10 @@ struct Max: ParsableCommand {
 
         print("🚀 全速模式: 将 \(fanCount) 个风扇设置为最大转速...")
 
-        for i in 0..<fanCount {
-            let maxRPM = try smc.readFanSpeed(SMCKeys.fanMaxSpeed(i))
-            print("  风扇 \(i): → \(String(format: "%.0f", maxRPM)) RPM")
-            try setFanSpeed(smc: smc, fanID: i, targetRPM: maxRPM)
+        let result = FanControlEngine(smc: smc).setAllFansMax()
+        guard result.success else {
+            print("❌ \(result.message)")
+            throw ExitCode.failure
         }
 
         print()
@@ -284,35 +288,10 @@ struct Auto: ParsableCommand {
 
         print("恢复自动控制...")
 
-        // 关闭 Force/Test 模式（仅当 Ftst 存在时）
-        let ftstInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.forceMode))
-        if let info = ftstInfo, info.dataSize > 0 {
-            do {
-                try smc.writeUInt8(SMCKeys.forceMode, value: 0)
-                print("  ✓ 已关闭 Force 模式 (Ftst=0)")
-            } catch {
-                print("  ⚠ 关闭 Force 模式失败: \(error)")
-            }
-        }
-
-        // 将每个风扇设回自动模式 (尝试小写和大写键名)
-        for i in 0..<fanCount {
-            var restored = false
-            for modeKey in [SMCKeys.fanMode(i), SMCKeys.fanModeLegacy(i)] {
-                do {
-                    let info = try smc.getKeyInfo(key: FourCharCode(fromString: modeKey))
-                    guard info.dataSize > 0 else { continue }
-                    try smc.writeUInt8(modeKey, value: 0)
-                    print("  ✓ 风扇 \(i) 已恢复自动模式 (\(modeKey)=0)")
-                    restored = true
-                    break
-                } catch {
-                    continue
-                }
-            }
-            if !restored {
-                print("  ⚠ 风扇 \(i) 恢复失败: 未找到模式键")
-            }
+        let result = FanControlEngine(smc: smc).resetAllFans()
+        guard result.success else {
+            print("❌ \(result.message)")
+            throw ExitCode.failure
         }
 
         // 等待一下再读取
@@ -329,89 +308,11 @@ struct Auto: ParsableCommand {
     }
 }
 
-// MARK: - Apple Silicon 风扇控制
-
-/// M5 Pro 风扇控制流程：
-/// 1. 写 F{id}md=1 切换手动模式
-/// 2. 写 F{id}Tg=目标RPM
-/// 恢复: 写 F{id}md=0
-func setFanSpeed(smc: SMCKit, fanID: Int, targetRPM: Double) throws {
-    // Step 1: 检测模式键 (F0md 小写 vs F0Md 大写)
-    let modeKey: String
-    let modeKeyInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.fanMode(fanID)))
-    let legacyKeyInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.fanModeLegacy(fanID)))
-
-    if let info = modeKeyInfo, info.dataSize > 0 {
-        modeKey = SMCKeys.fanMode(fanID)
-    } else if let info = legacyKeyInfo, info.dataSize > 0 {
-        modeKey = SMCKeys.fanModeLegacy(fanID)
-    } else {
-        print("  ❌ 未找到风扇模式键 (F\(fanID)md / F\(fanID)Md)")
-        throw ExitCode.failure
-    }
-
-    // Step 2: 尝试 Ftst (旧款需要，新款可跳过)
-    let ftstInfo = try? smc.getKeyInfo(key: FourCharCode(fromString: SMCKeys.forceMode))
-    if let info = ftstInfo, info.dataSize > 0 {
-        print("  ⏳ 启用 Force 模式 (Ftst=1)...")
-        try? smc.writeUInt8(SMCKeys.forceMode, value: 1)
-        Thread.sleep(forTimeInterval: 3.0)
-    }
-
-    // Step 3: 切换手动模式 (重试)
-    print("  ⏳ 切换手动模式 (\(modeKey)=1)...")
-    var manualSet = false
-    for attempt in 1...200 {
-        do {
-            try smc.writeUInt8(modeKey, value: 1)
-            let mode = try smc.readUInt8(modeKey)
-            if mode == 1 {
-                print("  ✓ 手动模式已启用 (尝试 \(attempt) 次)")
-                manualSet = true
-                break
-            }
-        } catch {
-            // 继续重试
-        }
-        usleep(50_000) // 50ms
-    }
-
-    guard manualSet else {
-        print("  ❌ 无法切换到手动模式 (200 次重试后放弃)")
-        throw ExitCode.failure
-    }
-
-    // Step 4: 设置目标转速 (重试)
-    print("  ⏳ 设置目标转速 (F\(fanID)Tg=\(String(format: "%.0f", targetRPM)))...")
-    var targetSet = false
-    for attempt in 1...200 {
-        do {
-            try smc.writeFanSpeed(SMCKeys.fanTargetSpeed(fanID), rpm: targetRPM)
-            let readBack = try smc.readFanSpeed(SMCKeys.fanTargetSpeed(fanID))
-            if abs(readBack - targetRPM) < 100 {
-                print("  ✓ 目标转速已设置 (尝试 \(attempt) 次)")
-                targetSet = true
-                break
-            }
-        } catch {
-            // 继续重试
-        }
-        usleep(50_000) // 50ms
-    }
-
-    guard targetSet else {
-        // 恢复自动
-        try? smc.writeUInt8(modeKey, value: 0)
-        print("  ❌ 无法设置目标转速 (200 次重试后放弃)")
-        throw ExitCode.failure
-    }
-}
-
 // MARK: - Debug 命令
 
 struct Debug: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "调试 SMC 读写（诊断问题用）"
+        abstract: "只读诊断 SMC 键和值"
     )
 
     @Flag(name: .shortAndLong, help: "扫描所有 SMC 键（较慢）")
@@ -465,42 +366,7 @@ struct Debug: ParsableCommand {
             }
         }
 
-        // 3. 写入测试
-        print()
-        print("── 写入测试 ──")
-
-        // 测试写入 Ftst
-        let ftstResult = smc.writeKeyDebug(SMCKeys.forceMode, dataType: FourCharCode(fromString: "ui8 "), bytes: [1])
-        print("  Ftst=1: ioResult=\(ftstResult.ioResult) smcResult=\(ftstResult.smcResult) (\(ftstResult.smcResult == 0 ? "成功" : "失败 0x\(String(ftstResult.smcResult, radix: 16))"))")
-
-        // 测试写入 F0Tg (little-endian float)
-        if fanCount > 0 {
-            let maxRPM = try smc.readFanSpeed(SMCKeys.fanMaxSpeed(0))
-            let leBytes = DataTypes.encodeFloat(Float(maxRPM))
-            let leHex = leBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
-
-            let tgResultLE = smc.writeKeyDebug(SMCKeys.fanTargetSpeed(0), dataType: FourCharCode(fromString: "flt "), bytes: leBytes)
-            print("  F0Tg=\(maxRPM) (LE [\(leHex)]): ioResult=\(tgResultLE.ioResult) smcResult=\(tgResultLE.smcResult)")
-
-            // 立即读回
-            let readBack1 = try smc.readFanSpeed(SMCKeys.fanTargetSpeed(0))
-            print("  F0Tg 读回: \(readBack1)")
-
-            // 测试大端序写入
-            let beBytes = [leBytes[3], leBytes[2], leBytes[1], leBytes[0]]
-            let beHex = beBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
-
-            let tgResultBE = smc.writeKeyDebug(SMCKeys.fanTargetSpeed(0), dataType: FourCharCode(fromString: "flt "), bytes: beBytes)
-            print("  F0Tg=\(maxRPM) (BE [\(beHex)]): ioResult=\(tgResultBE.ioResult) smcResult=\(tgResultBE.smcResult)")
-
-            let readBack2 = try smc.readFanSpeed(SMCKeys.fanTargetSpeed(0))
-            print("  F0Tg 读回: \(readBack2)")
-
-            // 恢复
-            _ = smc.writeKeyDebug(SMCKeys.forceMode, dataType: FourCharCode(fromString: "ui8 "), bytes: [0])
-        }
-
-        // 4. 扫描所有 SMC 键 (寻找风扇相关)
+        // 3. 扫描所有 SMC 键 (寻找风扇相关)
         if scan {
             print()
             print("── 扫描所有 SMC 键 (F 开头) ──")

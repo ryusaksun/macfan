@@ -73,14 +73,21 @@ public final class FanMonitor: ObservableObject {
     /// 配置管理器引用（用于自动评估配置）
     public var profileManager: ProfileManager?
 
-    /// 上次配置评估应用的转速百分比（防重复操作）
+    /// 上次由配置成功应用的转速百分比。
     private var lastAppliedPercent: Double?
+    private var pendingProfilePercent: Double?
+    /// 配置请求可能已把硬件置于手动模式；只有确认恢复成功后才能清除。
+    private var manualControlMayBeActive = false
+    private var profileRequestGeneration = 0
 
-    /// 直接 SMC 写入是否可用（避免反复尝试失败）
-    private var directWriteAvailable: Bool?
+    private let fanControlClient: any FanControlClient
 
-    public init(interval: TimeInterval = 2.0) {
+    public init(
+        interval: TimeInterval = 2.0,
+        fanControlClient: (any FanControlClient)? = nil
+    ) {
         self.interval = interval
+        self.fanControlClient = fanControlClient ?? XPCFanControlClient()
     }
 
     public func start() {
@@ -111,8 +118,7 @@ public final class FanMonitor: ObservableObject {
     public func stop() {
         timer?.invalidate()
         timer = nil
-        xpcConnection?.invalidate()
-        xpcConnection = nil
+        fanControlClient.invalidate()
         smc.close()
         isConnected = false
     }
@@ -122,121 +128,122 @@ public final class FanMonitor: ObservableObject {
     @Published public var controlMessage: String?
     @Published public var controlError: String?
 
-    private var xpcConnection: NSXPCConnection?
-
-    /// 获取 XPC 代理
-    private func getHelper() -> HelperProtocol? {
-        if xpcConnection == nil {
-            let conn = NSXPCConnection(machServiceName: helperMachServiceName, options: .privileged)
-            conn.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
-            conn.invalidationHandler = { [weak self] in
-                Task { @MainActor in self?.xpcConnection = nil }
+    /// 设置单个风扇转速。
+    public func setFanSpeed(
+        fanID: Int,
+        rpm: Double,
+        completion: FanControlCompletion? = nil
+    ) {
+        invalidateProfileRequest(clearApplied: true)
+        beginControlOperation()
+        fanControlClient.setFanSpeed(fanID: fanID, rpm: rpm) { [weak self] result in
+            self?.finishControlOperation(result)
+            if result.success {
+                self?.manualControlMayBeActive = true
             }
-            conn.resume()
-            xpcConnection = conn
-        }
-        return xpcConnection?.remoteObjectProxyWithErrorHandler { [weak self] error in
-            Task { @MainActor in
-                self?.controlError = "XPC: \(error.localizedDescription)"
-            }
-        } as? HelperProtocol
-    }
-
-    /// 检测可用的模式键
-    private func detectModeKey(fanID: Int) -> String? {
-        for key in [SMCKeys.fanMode(fanID), SMCKeys.fanModeLegacy(fanID)] {
-            do {
-                let info = try smc.getKeyInfo(key: FourCharCode(fromString: key))
-                if info.dataSize > 0 { return key }
-            } catch { continue }
-        }
-        return nil
-    }
-
-    /// 设置单个风扇转速
-    public func setFanSpeed(fanID: Int, rpm: Double) {
-        controlMessage = nil
-        controlError = nil
-
-        guard let helper = getHelper() else {
-            controlError = "Helper 未安装，请先点击 Install Helper"
-            return
-        }
-        helper.setFanSpeed(fanID: fanID, rpm: rpm) { [weak self] success, msg in
-            Task { @MainActor in
-                if success {
-                    self?.controlMessage = msg
-                } else {
-                    self?.controlError = msg
-                }
-            }
+            completion?(result)
         }
     }
 
-    /// 清除配置评估状态
+    /// 按每个风扇自己的转速范围设置统一百分比。
+    public func setAllFans(
+        percent: Double,
+        completion: FanControlCompletion? = nil
+    ) {
+        invalidateProfileRequest(clearApplied: true)
+        beginControlOperation()
+        fanControlClient.setAllFans(percent: percent) { [weak self] result in
+            self?.finishControlOperation(result)
+            if result.success {
+                self?.manualControlMayBeActive = true
+            }
+            completion?(result)
+        }
+    }
+
+    /// 清除配置评估状态并使尚未完成的配置请求失效。
     public func clearProfileState() {
-        lastAppliedPercent = nil
+        invalidateProfileRequest(clearApplied: true)
         profileManager?.resetEvaluationState()
     }
 
-    /// 所有风扇全速
-    public func setAllFansMax() {
-        controlMessage = nil
-        controlError = nil
+    /// 切换配置时保留“可能处于手动模式”的事实，使无匹配规则的新配置能先恢复自动。
+    public func profileDidChange() {
+        invalidateProfileRequest(clearApplied: true)
+        profileManager?.resetEvaluationState()
+        evaluateProfile()
+    }
 
-        guard let helper = getHelper() else {
-            controlError = "Helper 未安装"
-            return
-        }
-        helper.setAllFansMax { [weak self] success, msg in
-            Task { @MainActor in
-                if success {
-                    self?.controlMessage = msg
-                } else {
-                    self?.controlError = msg
-                }
+    /// 所有风扇全速。
+    public func setAllFansMax(completion: FanControlCompletion? = nil) {
+        invalidateProfileRequest(clearApplied: true)
+        beginControlOperation()
+        fanControlClient.setAllFansMax { [weak self] result in
+            self?.finishControlOperation(result)
+            if result.success {
+                self?.manualControlMayBeActive = true
             }
+            completion?(result)
         }
     }
 
-    /// 恢复自动控制
-    public func resetAllFans() {
-        controlMessage = nil
-        controlError = nil
-        fanResetCounter += 1
-
-        guard let helper = getHelper() else {
-            controlError = "Helper 未安装"
-            return
+    /// 恢复自动控制。只有 Helper 明确成功后才更新 UI 的恢复计数。
+    public func resetAllFans(
+        invalidateProfile: Bool = true,
+        completion: FanControlCompletion? = nil
+    ) {
+        if invalidateProfile {
+            invalidateProfileRequest(clearApplied: true)
         }
-        helper.resetAllFans { [weak self] success, msg in
-            Task { @MainActor in
-                if success {
-                    self?.controlMessage = msg
-                } else {
-                    self?.controlError = msg
-                }
+        beginControlOperation()
+        fanControlClient.resetAllFans { [weak self] result in
+            guard let self else {
+                completion?(result)
+                return
             }
+            finishControlOperation(result)
+            if result.success {
+                manualControlMayBeActive = false
+                lastAppliedPercent = nil
+                fanResetCounter += 1
+            }
+            completion?(result)
         }
     }
 
-    /// 恢复单个风扇自动控制
-    public func resetFan(fanID: Int) {
+    /// 恢复单个风扇自动控制。
+    public func resetFan(
+        fanID: Int,
+        completion: FanControlCompletion? = nil
+    ) {
+        invalidateProfileRequest(clearApplied: true)
+        beginControlOperation()
+        fanControlClient.resetFan(fanID: fanID) { [weak self] result in
+            self?.finishControlOperation(result)
+            completion?(result)
+        }
+    }
+
+    private func beginControlOperation() {
         controlMessage = nil
         controlError = nil
+    }
 
-        guard let helper = getHelper() else {
-            controlError = "Helper 未安装"
-            return
+    private func finishControlOperation(_ result: FanControlResult) {
+        if result.success {
+            controlMessage = result.message
+            controlError = nil
+        } else {
+            controlMessage = nil
+            controlError = result.message
         }
-        helper.resetFan(fanID: fanID) { [weak self] success, msg in
-            Task { @MainActor in
-                if success {
-                    self?.controlMessage = msg
-                } else {
-                    self?.controlError = msg
-                }
-            }
+    }
+
+    private func invalidateProfileRequest(clearApplied: Bool) {
+        profileRequestGeneration &+= 1
+        pendingProfilePercent = nil
+        if clearApplied {
+            lastAppliedPercent = nil
         }
     }
 
@@ -328,32 +335,60 @@ public final class FanMonitor: ObservableObject {
         evaluateProfile()
     }
 
-    /// 评估激活的配置并通过 XPC 应用风扇转速
-    private func evaluateProfile() {
+    /// 评估激活的配置并通过单次 XPC 请求应用所有风扇。
+    func evaluateProfile() {
         guard let pm = profileManager else { return }
         guard let targetPercent = pm.evaluateActiveProfile(maxTemp: maxTemp, battery: battery) else {
-            // 无匹配规则 → 恢复自动（仅在之前是配置控制时）
-            if lastAppliedPercent != nil {
-                lastAppliedPercent = nil
-                resetAllFans()
+            guard manualControlMayBeActive, pendingProfilePercent == nil else { return }
+            beginProfileReset()
+            return
+        }
+
+        guard targetPercent.isFinite, (0...100).contains(targetPercent) else {
+            controlError = "配置返回了无效的风扇转速百分比: \(targetPercent)"
+            return
+        }
+        if let lastAppliedPercent, abs(lastAppliedPercent - targetPercent) < 1 {
+            return
+        }
+        if let pendingProfilePercent, abs(pendingProfilePercent - targetPercent) < 1 {
+            return
+        }
+
+        beginProfileApply(percent: targetPercent)
+    }
+
+    private func beginProfileApply(percent: Double) {
+        profileRequestGeneration &+= 1
+        let generation = profileRequestGeneration
+        pendingProfilePercent = percent
+        manualControlMayBeActive = true
+        beginControlOperation()
+
+        fanControlClient.setAllFans(percent: percent) { [weak self] result in
+            guard let self, generation == profileRequestGeneration else { return }
+            pendingProfilePercent = nil
+            finishControlOperation(result)
+            if result.success {
+                lastAppliedPercent = percent
             }
-            return
         }
+    }
 
-        // 避免重复写入相同的转速
-        if let last = lastAppliedPercent, abs(last - targetPercent) < 1 {
-            return
-        }
+    private func beginProfileReset() {
+        profileRequestGeneration &+= 1
+        let generation = profileRequestGeneration
+        pendingProfilePercent = -1
+        beginControlOperation()
 
-        lastAppliedPercent = targetPercent
-
-        // 通过 XPC 设置风扇
-        if targetPercent >= 100 {
-            setAllFansMax()
-        } else {
-            for fan in fans {
-                let rpm = fan.minRPM + (fan.maxRPM - fan.minRPM) * targetPercent / 100.0
-                setFanSpeed(fanID: fan.id, rpm: rpm)
+        fanControlClient.resetAllFans { [weak self] result in
+            guard let self, generation == profileRequestGeneration else { return }
+            pendingProfilePercent = nil
+            finishControlOperation(result)
+            if result.success {
+                lastAppliedPercent = nil
+                manualControlMayBeActive = false
+                fanResetCounter += 1
             }
         }
     }

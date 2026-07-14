@@ -9,7 +9,13 @@ enum HelperInstaller {
 
     /// 检查 Helper 是否已安装
     static var isInstalled: Bool {
-        FileManager.default.fileExists(atPath: helperInstallPath) && isRunning
+        guard FileManager.default.fileExists(atPath: helperInstallPath),
+              isRunning,
+              let bundledHelperPath = findHelperBinary() else {
+            return false
+        }
+        // 协议会随 App 更新；二进制不同就要求重新安装，避免新 App 调用旧 XPC selector。
+        return FileManager.default.contentsEqual(atPath: helperInstallPath, andPath: bundledHelperPath)
     }
 
     /// 检查 daemon 是否正在运行

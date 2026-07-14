@@ -52,7 +52,7 @@ struct SettingsView: View {
 
             // 关于
             VStack(alignment: .leading, spacing: 4) {
-                Text("MacFan v1.0.0")
+                Text("MacFan v0.4.0")
                     .font(.caption)
                     .fontWeight(.medium)
                 Text("macOS fan control for Apple Silicon")

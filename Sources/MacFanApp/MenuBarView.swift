@@ -3,7 +3,6 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var monitor: FanMonitor
     @ObservedObject var profileManager: ProfileManager
-    @AppStorage("autoRestoreOnQuit") private var autoRestoreOnQuit: Bool = true
     @State private var showSettings = false
     @State private var editingProfile: FanProfile?
     @State private var helperInstalled = HelperInstaller.isInstalled
@@ -68,6 +67,17 @@ struct MenuBarView: View {
                     // 配置方案
                     SectionHeader(title: "Profiles", icon: "list.bullet")
 
+                    if let error = profileManager.loadError ?? profileManager.saveError {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     ForEach(profileManager.profiles) { profile in
                         ProfileRow(
                             profile: profile,
@@ -75,11 +85,10 @@ struct MenuBarView: View {
                             onActivate: {
                                 if profileManager.activeProfileID == profile.id {
                                     profileManager.setActive(nil)
-                                    monitor.clearProfileState()
                                     monitor.resetAllFans()
                                 } else {
                                     profileManager.setActive(profile.id)
-                                    monitor.clearProfileState()
+                                    monitor.profileDidChange()
                                 }
                             },
                             onEdit: {
@@ -184,13 +193,7 @@ struct MenuBarView: View {
                 Spacer()
 
                 Button("Quit") {
-                    if autoRestoreOnQuit {
-                        monitor.resetAllFans()
-                    }
-                    let quitDelay = autoRestoreOnQuit ? 0.5 : 0
-                    DispatchQueue.main.asyncAfter(deadline: .now() + quitDelay) {
-                        NSApplication.shared.terminate(nil)
-                    }
+                    NSApplication.shared.terminate(nil)
                 }
                 .buttonStyle(.plain)
                 .font(.caption)
@@ -342,16 +345,10 @@ struct ProfileRow: View {
 struct UnifiedFanControl: View {
     @ObservedObject var monitor: FanMonitor
     @ObservedObject var profileManager: ProfileManager
-    @State private var sliderValue: Double = 0
+    @State private var sliderPercent: Double = 0
     @State private var isManual = false
     @State private var isDragging = false
 
-    private var minRPM: Double { monitor.fans.map(\.minRPM).min() ?? 0 }
-    private var maxRPM: Double { monitor.fans.map(\.maxRPM).max() ?? 1 }
-    private var avgActualRPM: Double {
-        guard !monitor.fans.isEmpty else { return 0 }
-        return monitor.fans.map(\.actualRPM).reduce(0, +) / Double(monitor.fans.count)
-    }
     private var avgPercent: Double {
         guard !monitor.fans.isEmpty else { return 0 }
         return monitor.fans.map(\.percent).reduce(0, +) / Double(monitor.fans.count)
@@ -375,28 +372,23 @@ struct UnifiedFanControl: View {
                 }
             }
 
-            // 统一滑块
-            if minRPM < maxRPM {
-                Slider(value: $sliderValue, in: minRPM...maxRPM, step: 100, onEditingChanged: { editing in
-                    if editing {
-                        isDragging = true
-                        if !isManual { isManual = true }
-                    } else {
-                        isDragging = false
-                        applySpeed(sliderValue)
-                    }
-                })
-                .tint(fanBarColor(displayPercent))
-            }
+            // 统一百分比滑块；每个风扇由 Helper 按自身转速范围换算。
+            Slider(value: $sliderPercent, in: 0...100, step: 1, onEditingChanged: { editing in
+                if editing {
+                    isDragging = true
+                } else {
+                    isDragging = false
+                    applySpeed(sliderPercent)
+                }
+            })
+            .tint(fanBarColor(displayPercent))
 
             // 档位快捷按钮
             HStack(spacing: 6) {
                 ForEach([0, 25, 50, 75, 100], id: \.self) { pct in
                     Button {
-                        let rpm = minRPM + (maxRPM - minRPM) * Double(pct) / 100.0
-                        sliderValue = rpm
-                        isManual = true
-                        applySpeed(rpm)
+                        sliderPercent = Double(pct)
+                        applySpeed(Double(pct))
                     } label: {
                         Text("\(pct)%")
                             .font(.caption)
@@ -414,24 +406,17 @@ struct UnifiedFanControl: View {
 
             // 信息行 + Auto 按钮
             HStack {
-                Text("\(Int(minRPM))")
+                Text("0%")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if isDragging || isManual {
-                    Text("Target: \(Int(sliderValue)) RPM")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(Int(avgPercent))%")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(Int((isDragging || isManual ? sliderPercent : avgPercent).rounded()))%")
+                    .font(.caption2)
+                    .fontWeight(isDragging || isManual ? .medium : .regular)
+                    .foregroundStyle(.secondary)
                 Spacer()
                 if isManual {
                     Button {
-                        resetToAuto()
                         profileManager.setActive(nil)
                         monitor.resetAllFans()
                     } label: {
@@ -445,7 +430,7 @@ struct UnifiedFanControl: View {
                     .controlSize(.mini)
                     .tint(.green)
                 } else {
-                    Text("\(Int(maxRPM))")
+                    Text("100%")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -455,48 +440,47 @@ struct UnifiedFanControl: View {
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         .background(isManual ? Color.orange.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         .onAppear {
-            sliderValue = Swift.max(avgActualRPM, minRPM)
+            sliderPercent = avgPercent
         }
-        .onChange(of: avgActualRPM) { newAvg in
+        .onChange(of: avgPercent) { newPercent in
             if !isManual && !isDragging {
-                sliderValue = Swift.max(newAvg, minRPM)
+                sliderPercent = newPercent
             }
         }
         .onChange(of: monitor.fanResetCounter) { _ in
             resetToAuto()
         }
-        .onChange(of: profileManager.activeProfileID) { _ in
-            if isManual { resetToAuto() }
+        .onChange(of: profileManager.activeProfileID) { newID in
+            if newID != nil, isManual { resetToAuto() }
         }
     }
 
-    private func applySpeed(_ rpm: Double) {
+    private func applySpeed(_ percent: Double) {
         profileManager.setActive(nil)
-        for fan in monitor.fans {
-            let clamped = max(fan.minRPM, min(fan.maxRPM, rpm))
-            monitor.setFanSpeed(fanID: fan.id, rpm: clamped)
+        monitor.setAllFans(percent: percent) { result in
+            if result.success {
+                sliderPercent = percent
+                isManual = true
+            }
         }
     }
 
     private var activePreset: Int? {
-        guard isManual, maxRPM > minRPM else { return nil }
-        let pct = (sliderValue - minRPM) / (maxRPM - minRPM) * 100
+        guard isManual else { return nil }
         for preset in [0, 25, 50, 75, 100] {
-            if abs(pct - Double(preset)) < 3 { return preset }
+            if abs(sliderPercent - Double(preset)) < 3 { return preset }
         }
         return nil
     }
 
     private var displayPercent: Double {
-        guard maxRPM > minRPM else { return 0 }
-        let rpm = isManual ? sliderValue : avgActualRPM
-        return max(0, min(100, (rpm - minRPM) / (maxRPM - minRPM) * 100))
+        max(0, min(100, isManual ? sliderPercent : avgPercent))
     }
 
     private func resetToAuto() {
         isManual = false
         isDragging = false
-        sliderValue = Swift.max(avgActualRPM, minRPM)
+        sliderPercent = avgPercent
     }
 
     private func fanBarColor(_ percent: Double) -> Color {

@@ -9,6 +9,9 @@ import Foundation
     /// 恢复指定风扇为自动控制
     func resetFan(fanID: Int, withReply reply: @escaping (Bool, String) -> Void)
 
+    /// 按各自转速范围设置所有风扇的统一百分比
+    func setAllFans(percent: Double, withReply reply: @escaping (Bool, String) -> Void)
+
     /// 所有风扇全速
     func setAllFansMax(withReply reply: @escaping (Bool, String) -> Void)
 

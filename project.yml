@@ -16,8 +16,8 @@ targets:
       base:
         INFOPLIST_FILE: Sources/MacFanApp/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.macfan.MacFan
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "0.4.0"
+        CURRENT_PROJECT_VERSION: 4
         MACOSX_DEPLOYMENT_TARGET: "13.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 2FJFJ2WAF8

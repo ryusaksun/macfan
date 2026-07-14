@@ -31,7 +31,7 @@ struct ProfileEditView: View {
                 }
                 .labelsHidden()
 
-                if case .batteryBelow(let pct) = profile.condition {
+                if case .batteryBelow = profile.condition {
                     Picker("", selection: batteryThreshold) {
                         ForEach([10, 20, 30, 40, 50], id: \.self) { val in
                             Text("\(val)%").tag(val)

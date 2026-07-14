@@ -15,20 +15,27 @@ public final class ProfileManager: ObservableObject {
     private let fileURL: URL
 
     @Published public var saveError: String?
+    @Published public var loadError: String?
 
-    public init() {
+    public convenience init() {
         guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            self.fileURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("macfan_profiles.json")
-            load()
+            self.init(fileURL: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("macfan_profiles.json"))
             return
         }
-        let dir = appSupport.appendingPathComponent("MacFan", isDirectory: true)
+        self.init(fileURL: appSupport.appendingPathComponent("MacFan/profiles.json"))
+    }
+
+    public init(fileURL: URL) {
+        self.fileURL = fileURL
         do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
         } catch {
+            loadError = "无法创建配置目录: \(error.localizedDescription)"
             NSLog("MacFan: 无法创建配置目录: \(error)")
         }
-        self.fileURL = dir.appendingPathComponent("profiles.json")
         load()
     }
 
@@ -83,16 +90,56 @@ public final class ProfileManager: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode(SaveData.self, from: data)
-        else {
-            // 首次运行，添加预设
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
             profiles = [.quiet, .performance, .maxSpeed]
             save()
             return
         }
-        profiles = decoded.profiles
-        activeProfileID = decoded.activeProfileID
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            profiles = []
+            activeProfileID = nil
+            loadError = "读取配置失败，原文件未被修改: \(error.localizedDescription)"
+            return
+        }
+
+        do {
+            let decoded = try JSONDecoder().decode(SaveData.self, from: data)
+            profiles = decoded.profiles
+            if let id = decoded.activeProfileID, profiles.contains(where: { $0.id == id }) {
+                activeProfileID = id
+            } else {
+                activeProfileID = nil
+            }
+            loadError = nil
+        } catch {
+            recoverCorruptFile(decodingError: error)
+        }
+    }
+
+    private func recoverCorruptFile(decodingError: Error) {
+        let backupURL = fileURL.deletingPathExtension()
+            .appendingPathExtension("corrupt-\(UUID().uuidString).json")
+        do {
+            try FileManager.default.copyItem(at: fileURL, to: backupURL)
+        } catch {
+            profiles = []
+            activeProfileID = nil
+            loadError = "配置已损坏且无法备份，原文件未被覆盖: \(error.localizedDescription)"
+            return
+        }
+
+        profiles = [.quiet, .performance, .maxSpeed]
+        activeProfileID = nil
+        loadError = "配置已损坏，原文件已备份为 \(backupURL.lastPathComponent)，并已恢复默认配置。"
+
+        let preservedLoadError = loadError
+        save()
+        loadError = preservedLoadError
+        NSLog("MacFan: 配置解码失败: \(decodingError)")
     }
 
     private struct SaveData: Codable {
@@ -126,12 +173,12 @@ public final class ProfileManager: ObservableObject {
                 return nil
             }
         case .onBattery:
-            guard !battery.isPluggedIn else {
+            guard battery.isPresent, !battery.isPluggedIn else {
                 resetEvaluationState()
                 return nil
             }
         case .batteryBelow(let threshold):
-            guard battery.percentage < threshold else {
+            guard battery.isPresent, battery.percentage < threshold else {
                 resetEvaluationState()
                 return nil
             }
