@@ -37,11 +37,13 @@ final class ProfileEditorController {
             defer: false
         )
         panel.contentViewController = hosting
-        panel.title = isNew ? "New Profile" : "Edit Profile"
+        panel.title = isNew ? "新建配置方案" : "编辑配置方案"
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        // 与菜单栏面板的深色风格保持一致
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.center()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -81,27 +83,27 @@ struct ProfileEditView: View {
         VStack(alignment: .leading, spacing: 14) {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
                 GridRow {
-                    Text("Name")
+                    Text("名称")
                         .foregroundStyle(.secondary)
                         .gridColumnAlignment(.trailing)
-                    TextField("Profile name", text: $profile.name)
+                    TextField("方案名称", text: $profile.name)
                         .textFieldStyle(.roundedBorder)
                 }
                 GridRow {
-                    Text("Active when")
+                    Text("生效条件")
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Picker("Active when", selection: conditionKind) {
-                            Text("Always").tag(0)
-                            Text("Charging").tag(1)
-                            Text("On Battery").tag(2)
-                            Text("Battery Below").tag(3)
+                        Picker("生效条件", selection: conditionKind) {
+                            Text("始终").tag(0)
+                            Text("充电时").tag(1)
+                            Text("电池供电时").tag(2)
+                            Text("电量低于").tag(3)
                         }
                         .labelsHidden()
                         .fixedSize()
 
                         if case .batteryBelow = profile.condition {
-                            Picker("Battery threshold", selection: batteryThreshold) {
+                            Picker("电量阈值", selection: batteryThreshold) {
                                 ForEach(Self.batteryThresholds, id: \.self) { value in
                                     Text("\(value)%").tag(value)
                                 }
@@ -116,24 +118,24 @@ struct ProfileEditView: View {
             Divider()
 
             HStack {
-                Text("Rules")
+                Text("规则")
                     .font(.headline)
                 Spacer()
                 Button {
                     addRule()
                 } label: {
-                    Label("Add Rule", systemImage: "plus")
+                    Label("添加规则", systemImage: "plus")
                 }
                 .controlSize(.small)
             }
 
-            Text("The rule with the highest matching temperature wins. Below every threshold, macOS controls the fans. Speed is a percentage of each fan's range.")
+            Text("温度达到的最高一条规则生效；低于所有阈值时由系统控制风扇。转速是各风扇转速范围的百分比。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if profile.rules.isEmpty {
-                Text("No rules — the fans stay under system control.")
+                Text("没有规则——风扇保持系统控制。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
@@ -165,9 +167,9 @@ struct ProfileEditView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel, action: onCancel)
+                Button("取消", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
-                Button(isNew ? "Create" : "Save", action: commit)
+                Button(isNew ? "创建" : "保存", action: commit)
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedName.isEmpty)
             }
@@ -183,12 +185,12 @@ struct ProfileEditView: View {
     private var validationWarning: String? {
         let thresholds = profile.rules.map { $0.tempThreshold.rounded() }
         if Set(thresholds).count != thresholds.count {
-            return "Two rules share the same temperature; only one of them will be used."
+            return "有两条规则的温度相同，只有其中一条会生效。"
         }
         let sorted = profile.rules.sorted { $0.tempThreshold < $1.tempThreshold }
         let isMonotonic = zip(sorted, sorted.dropFirst()).allSatisfy { $0.fanSpeedPercent <= $1.fanSpeedPercent }
         if !isMonotonic {
-            return "A higher temperature uses a lower speed than a cooler rule. Is that intended?"
+            return "较高温度的转速低于较低温度的规则，确定这样设置吗？"
         }
         return nil
     }
@@ -260,12 +262,12 @@ struct RuleRow: View {
         HStack(spacing: 6) {
             Text("≥")
                 .foregroundStyle(.secondary)
-            TextField("Temperature", value: $rule.tempThreshold, format: .number.precision(.fractionLength(0)))
+            TextField("温度", value: $rule.tempThreshold, format: .number.precision(.fractionLength(0)))
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 44)
-            Stepper("Temperature", value: $rule.tempThreshold, in: 0...110, step: 1)
+            Stepper("温度", value: $rule.tempThreshold, in: 0...110, step: 1)
                 .labelsHidden()
             Text("°C")
                 .foregroundStyle(.secondary)
@@ -281,7 +283,7 @@ struct RuleRow: View {
                 }
             }
                 .controlSize(.small)
-                .tint(Palette.fanLevel(rule.fanSpeedPercent))
+                .tint(Theme.fanLevel(rule.fanSpeedPercent))
             Text(Format.percent(rule.fanSpeedPercent))
                 .monospacedDigit()
                 .frame(width: 40, alignment: .trailing)
@@ -291,7 +293,7 @@ struct RuleRow: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
-            .help("Remove rule")
+            .help("移除规则")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

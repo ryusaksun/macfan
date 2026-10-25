@@ -106,7 +106,7 @@ final class ProfileManagerTests: XCTestCase {
     func testHysteresisKeepsRuleUntilTemperatureDropsBelowMargin() throws {
         let location = try makeLocation()
         let manager = ProfileManager(fileURL: location.file)
-        let quiet = try XCTUnwrap(manager.profiles.first { $0.name == "Quiet" })
+        let quiet = try XCTUnwrap(manager.profiles.first { $0.name == "安静" })
         manager.setActive(quiet.id)
         let battery = BatteryInfo()
 

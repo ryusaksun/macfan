@@ -15,11 +15,11 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Settings")
-                .font(.headline)
+            Text("设置")
+                .font(.system(size: 14, weight: .semibold))
 
             VStack(alignment: .leading, spacing: 8) {
-                SettingToggle(title: "Launch at login", isOn: Binding(
+                SettingToggle(title: "开机自动启动", isOn: Binding(
                     get: { launchAtLogin },
                     set: { setLaunchAtLogin($0) }
                 ))
@@ -29,18 +29,18 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                SettingToggle(title: "Show temperature in menu bar", isOn: $showTempInMenuBar)
-                SettingToggle(title: "Return fans to system control on quit", isOn: $autoRestoreOnQuit)
+                SettingToggle(title: "在菜单栏显示温度", isOn: $showTempInMenuBar)
+                SettingToggle(title: "退出时恢复系统控制", isOn: $autoRestoreOnQuit)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Refresh interval")
+                Text("刷新间隔")
                     .foregroundStyle(.secondary)
-                Picker("Refresh interval", selection: $refreshInterval) {
-                    Text("1s").tag(1.0)
-                    Text("2s").tag(2.0)
-                    Text("5s").tag(5.0)
-                    Text("10s").tag(10.0)
+                Picker("刷新间隔", selection: $refreshInterval) {
+                    Text("1 秒").tag(1.0)
+                    Text("2 秒").tag(2.0)
+                    Text("5 秒").tag(5.0)
+                    Text("10 秒").tag(10.0)
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
@@ -64,8 +64,10 @@ struct SettingsView: View {
             }
         }
         .controlSize(.small)
+        .font(.system(size: 12))
         .padding(16)
         .frame(width: 290)
+        .preferredColorScheme(.dark)
         .onAppear(perform: refreshLoginItem)
     }
 
@@ -73,27 +75,27 @@ struct SettingsView: View {
     private var helperSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Privileged helper")
+                Text("特权辅助程序")
                 Spacer()
                 Text(helperStatusText)
                     .foregroundStyle(.secondary)
             }
             if confirmUninstall {
-                Text("Fans return to system control and MacFan can no longer change their speed until you reinstall.")
+                Text("卸载后风扇恢复系统控制，重新安装前 MacFan 无法调节转速。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Cancel") { confirmUninstall = false }
-                    Button("Uninstall", role: .destructive, action: uninstallHelper)
+                    Button("取消") { confirmUninstall = false }
+                    Button("卸载", role: .destructive, action: uninstallHelper)
                 }
             } else {
                 HStack {
-                    Button(helper.status == .installed ? "Reinstall" : "Install") {
+                    Button(helper.status == .installed ? "重新安装" : "安装") {
                         helper.install(completion: onHelperResult)
                     }
                     if helper.status == .installed || helper.status == .outdated {
-                        Button("Uninstall…") { confirmUninstall = true }
+                        Button("卸载…") { confirmUninstall = true }
                     }
                     if helper.isWorking {
                         ProgressView()
@@ -107,10 +109,10 @@ struct SettingsView: View {
 
     private var helperStatusText: String {
         switch helper.status {
-        case .checking: return "Checking…"
-        case .notInstalled: return "Not installed"
-        case .outdated: return "Needs update"
-        case .installed: return "Installed"
+        case .checking: return "检查中…"
+        case .notInstalled: return "未安装"
+        case .outdated: return "需要更新"
+        case .installed: return "已安装"
         }
     }
 
@@ -133,7 +135,7 @@ struct SettingsView: View {
         let status = SMAppService.mainApp.status
         launchAtLogin = status == .enabled
         loginItemNote = status == .requiresApproval
-            ? "Approve MacFan in System Settings › General › Login Items."
+            ? "请在「系统设置 › 通用 › 登录项」中允许 MacFan。"
             : nil
     }
 
@@ -147,7 +149,7 @@ struct SettingsView: View {
             refreshLoginItem()
         } catch {
             refreshLoginItem()
-            loginItemNote = "Couldn't update login item: \(error.localizedDescription)"
+            loginItemNote = "无法更新登录项：\(error.localizedDescription)"
         }
     }
 }

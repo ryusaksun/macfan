@@ -17,3 +17,28 @@ final class DataTypesTests: XCTestCase {
         XCTAssertEqual(DataTypes.decodeSP78(DataTypes.encodeSP78(-20.5)), -20.5)
     }
 }
+
+final class MonitorHistoryTests: XCTestCase {
+    func testHistoryKeepsMostRecentSamplesPerSeries() {
+        var history = MonitorHistory()
+        let fan = FanInfo(id: 0, actualRPM: 0, minRPM: 2_000, maxRPM: 6_000, targetRPM: 0)
+
+        for i in 0..<(MonitorHistory.capacity + 5) {
+            var sample = fan
+            sample.actualRPM = Double(i)
+            history.record(
+                fans: [sample],
+                temperatures: [
+                    TempInfo(key: "TC0P", name: "CPU Proximity", value: Double(i)),
+                    TempInfo(key: "TC1C", name: "CPU Core 1", value: Double(i) + 10),
+                ],
+                maxTemp: Double(i) + 10
+            )
+        }
+
+        XCTAssertEqual(history.fanRPM.count, MonitorHistory.capacity)
+        XCTAssertEqual(history.fanRPM.first, 5)
+        XCTAssertEqual(history.temperatures[.cpu]?.last, Double(MonitorHistory.capacity + 4) + 10)
+        XCTAssertNil(history.temperatures[.gpu])
+    }
+}

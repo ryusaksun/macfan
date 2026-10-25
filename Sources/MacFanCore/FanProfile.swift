@@ -12,7 +12,7 @@ public struct FanProfile: Identifiable, Codable, Sendable, Equatable {
 
     public init(
         id: UUID = UUID(),
-        name: String = "New Profile",
+        name: String = "新方案",
         isEnabled: Bool = true,
         rules: [FanRule] = [],
         condition: ProfileCondition = .always
@@ -27,7 +27,7 @@ public struct FanProfile: Identifiable, Codable, Sendable, Equatable {
     /// 预设：全速模式
     public static var maxSpeed: FanProfile {
         FanProfile(
-            name: "Full Speed",
+            name: "全速",
             rules: [FanRule(tempThreshold: 0, fanSpeedPercent: 100)],
             condition: .always
         )
@@ -36,7 +36,7 @@ public struct FanProfile: Identifiable, Codable, Sendable, Equatable {
     /// 预设：安静模式
     public static var quiet: FanProfile {
         FanProfile(
-            name: "Quiet",
+            name: "安静",
             rules: [
                 FanRule(tempThreshold: 80, fanSpeedPercent: 100),
                 FanRule(tempThreshold: 70, fanSpeedPercent: 60),
@@ -49,7 +49,7 @@ public struct FanProfile: Identifiable, Codable, Sendable, Equatable {
     /// 预设：性能模式
     public static var performance: FanProfile {
         FanProfile(
-            name: "Performance",
+            name: "性能",
             rules: [
                 FanRule(tempThreshold: 70, fanSpeedPercent: 100),
                 FanRule(tempThreshold: 50, fanSpeedPercent: 70),

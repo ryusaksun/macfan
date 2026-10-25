@@ -7,7 +7,7 @@ macOS 风扇控制工具，专为 Apple Silicon 设计。通过菜单栏实时�
 - **实时监控** — 菜单栏显示 CPU/GPU/SSD 温度及风扇转速
 - **手动控制** — 一个滑块或快捷档位（Auto / 0–100% / Max）统一调节所有风扇
 - **配置方案** — 按温度阈值自动调速，支持多条件触发（充电/电池/电量低于 X%）
-- **内置预设** — Quiet / Performance / Full Speed 三套方案开箱即用
+- **内置预设** — 安静 / 性能 / 全速三套方案开箱即用
 - **一次授权** — 特权 Helper 安装后以 LaunchDaemon 运行，无需反复输入密码
 - **命令行工具** — `macfan-cli` 支持 status / set / max / auto / debug 命令
 
@@ -37,9 +37,9 @@ swift build -c release
 启动后 MacFan 以菜单栏图标常驻，点击即可：
 
 - 查看所有风扇转速和当前控制状态（系统 / 手动 / 配置方案）
-- 拖动滑块或点击档位手动调速，点 **Auto** 交还系统控制
+- 点击档位（安静 / 均衡 / 降温 / 强冷）或拖动「自定义」滑块手动调速，点 **自动** 交还系统控制
 - 点击配置方案即可启用/停用；⋯ 菜单可编辑、复制、删除（删除可撤销）
-- 按类别折叠查看温度传感器读数
+- 按类别查看温度及最近 2 分钟趋势，点击卡片查看该类全部传感器
 - 在设置中可开启菜单栏温度显示、开机自启，以及重新安装/卸载 Helper
 
 ### CLI
@@ -99,7 +99,7 @@ xcodebuild -project MacFan.xcodeproj -scheme MacFan -configuration Release build
 - 支持 3°C 温度迟滞，避免频繁切换
 - 触发条件：Always / Charging / On Battery / Battery Below X%
 
-示例（Quiet 方案）：
+示例（安静方案）：
 
 | 温度 ≥ | 风扇转速 |
 |--------|----------|

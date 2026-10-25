@@ -84,6 +84,36 @@ public struct TempInfo: Identifiable, Sendable, Equatable {
     }
 }
 
+/// 最近一段时间的采样，用于绘制趋势图
+public struct MonitorHistory: Equatable, Sendable {
+    public static let capacity = 60
+
+    public private(set) var fanRPM: [Double] = []
+    public private(set) var maxTemp: [Double] = []
+    public private(set) var temperatures: [TempInfo.TempCategory: [Double]] = [:]
+
+    public init() {}
+
+    mutating func record(fans: [FanInfo], temperatures temps: [TempInfo], maxTemp: Double) {
+        if !fans.isEmpty {
+            Self.append(fans.map(\.actualRPM).reduce(0, +) / Double(fans.count), to: &fanRPM)
+        }
+        if maxTemp > 0 {
+            Self.append(maxTemp, to: &self.maxTemp)
+        }
+        for (category, values) in Dictionary(grouping: temps, by: \.category) {
+            Self.append(values.map(\.value).max() ?? 0, to: &temperatures[category, default: []])
+        }
+    }
+
+    private static func append(_ value: Double, to buffer: inout [Double]) {
+        buffer.append(value)
+        if buffer.count > capacity {
+            buffer.removeFirst(buffer.count - capacity)
+        }
+    }
+}
+
 /// 当前由谁控制风扇
 public enum FanControlMode: Equatable, Sendable {
     /// 系统自动控制
@@ -102,6 +132,7 @@ public final class FanMonitor: ObservableObject {
     @Published public internal(set) var temperatures: [TempInfo] = []
     @Published public internal(set) var maxTemp: Double = 0
     @Published public internal(set) var battery: BatteryInfo = BatteryInfo()
+    @Published public internal(set) var history = MonitorHistory()
     @Published public private(set) var isConnected = false
     @Published public private(set) var lastError: String?
     /// 界面展示用的控制状态，由内部状态派生
@@ -396,6 +427,7 @@ public final class FanMonitor: ObservableObject {
     private func refresh() {
         readFans()
         readTemperatures()
+        history.record(fans: fans, temperatures: temperatures, maxTemp: maxTemp)
 
         let newBattery = batteryService.getBatteryInfo()
         if newBattery != battery {

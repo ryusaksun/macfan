@@ -153,12 +153,13 @@ XPC security: `HelperDelegate` validates the Apple signing chain, team ID (`2FJF
 
 ## GUI Structure
 
-The app uses `MenuBarExtra` with `.window` style. Key UI components:
+The app uses `MenuBarExtra` with `.window` style. The panel is a Chinese, always-dark dashboard (warm radial background, cards in `Components.swift`: `DashCard`, `Chip`, `BigValue`, `BarSparkline`/`AreaSparkline`, `RingGauge`, `SegmentButton`). Layout: hero (max temp + status word + chips) → fan card → temperature cards (2-column grid, battery temps go into the battery card) → battery card → profiles card. Key UI components:
 - **FanMonitor.controlMode** (`.system` / `.manual(percent)` / `.profile(percent?)`): single source of truth for what the UI shows. Views never keep their own manual/auto flags.
-- **SpeedControl**: One control for all fans — slider (applies on release) + Auto/0/25/50/75/Max presets. Do not use `Slider(step:)`; macOS draws a tick per step.
+- **FanControls**: One control for all fans — segments 自动 / 安静 25% / 均衡 50% / 降温 75% / 强冷 100% plus a custom slider (applies on release). Do not use `Slider(step:)`; macOS draws a tick per step.
+- **FanMonitor.history** (`MonitorHistory`): last 60 samples of average fan RPM and per-category max temperature, used by the sparklines.
 - **ProfileRow**: Whole row toggles activation; ⋯ menu / context menu for Edit, Duplicate, Delete (delete offers Undo instead of a confirmation dialog).
 - **ProfileEditorController**: Opens `ProfileEditView` in a floating NSPanel. New profiles are only added on Create. Saving calls `makeFirstResponder(nil)` first so a focused number field commits its value.
-- **TemperatureGroup**: Sensors grouped by category, collapsed to the hottest reading; expansion persists in `@AppStorage("expandedTemperatureGroups")`.
+- **TemperatureCard**: One card per sensor category showing the hottest reading and its trend; tapping opens a popover with every sensor in the category.
 - **Menu bar label**: Rendered to a template `NSImage` via `ImageRenderer` (`MenuBarIcon`) — a `Label`/`HStack` label does not reliably show both icon and text.
 
 ### Fan control ownership (FanMonitor)

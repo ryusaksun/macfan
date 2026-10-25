@@ -30,7 +30,7 @@ struct MacFanApp: App {
         } label: {
             if let temperature = menuBarTemperature {
                 Image(nsImage: MenuBarIcon.image(text: temperature))
-                    .accessibilityLabel("MacFan \(temperature)")
+                    .accessibilityLabel("MacFan，最高温度 \(temperature)")
             } else {
                 Image(systemName: "fan.fill")
                     .accessibilityLabel("MacFan")

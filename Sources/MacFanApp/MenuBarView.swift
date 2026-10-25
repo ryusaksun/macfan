@@ -9,24 +9,24 @@ struct MenuBarView: View {
     @State private var showSettings = false
     @State private var contentHeight: CGFloat = 0
     @State private var deletedProfile: DeletedProfile?
-    @AppStorage("expandedTemperatureGroups") private var expandedGroupsRaw = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    hero
                     if let error = monitor.lastError {
-                        Banner(message: "Cannot read sensors: \(error)", style: .error)
+                        Banner(message: "无法读取传感器：\(error)", style: .error)
                     }
-                    fanSection
-                    profileSection
-                    if !monitor.temperatures.isEmpty {
-                        temperatureSection
+                    fanCard
+                    controlFeedback
+                    temperatureGrid
+                    if monitor.battery.isPresent {
+                        batteryCard
                     }
+                    profilesCard
                 }
-                .padding(14)
+                .padding(12)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
@@ -35,133 +35,159 @@ struct MenuBarView: View {
             }
             .frame(height: scrollHeight)
             .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
-            Divider()
+
             footer
         }
         .frame(width: 340)
+        .background(Theme.background)
+        .preferredColorScheme(.dark)
         .onAppear { helper.refresh() }
     }
 
     /// 内容较少时收缩，较多时滚动；上限不超过屏幕可用高度
     private var scrollHeight: CGFloat {
-        let screenLimit = (NSScreen.main?.visibleFrame.height ?? 900) - 140
-        let limit = min(640, max(320, screenLimit))
-        return min(max(contentHeight, 120), limit)
+        let screenLimit = (NSScreen.main?.visibleFrame.height ?? 900) - 100
+        let limit = min(880, max(360, screenLimit))
+        return min(max(contentHeight, 160), limit)
     }
 
-    // MARK: - 标题栏
+    // MARK: - 顶部概览
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(Palette.mode(monitor.controlMode).opacity(0.16))
-                Image(systemName: "fan.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Palette.mode(monitor.controlMode))
-            }
-            .frame(width: 32, height: 32)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("MacFan")
-                    .font(.headline)
-                Text(modeSummary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 1) {
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: heroIcon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(statusColor)
                 if monitor.maxTemp > 0 {
-                    Text(Format.temperature(monitor.maxTemp))
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Palette.temperatureText(monitor.maxTemp))
-                        .help("Highest sensor temperature")
+                    BigValue(value: "\(Int(monitor.maxTemp.rounded()))", unit: "°C", size: 34)
+                    Text(Theme.temperatureStatus(monitor.maxTemp))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(statusColor)
+                        .padding(.leading, 2)
+                } else {
+                    BigValue(value: "--", unit: "°C", size: 34)
+                }
+                Spacer()
+            }
+            .help("所有传感器中的最高温度")
+
+            HStack(spacing: 6) {
+                if let chip = SystemInfo.chipName {
+                    Chip(text: chip)
+                }
+                if !monitor.fans.isEmpty {
+                    Chip(text: "\(monitor.fans.count) 个风扇")
                 }
                 if monitor.battery.isPresent {
-                    HStack(spacing: 3) {
-                        Image(systemName: batteryIcon)
-                        Text("\(monitor.battery.percentage)%")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Chip(text: monitor.battery.isPluggedIn ? "已接电" : "电池供电")
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
     }
 
-    private var modeSummary: String {
-        switch monitor.controlMode {
-        case .system:
-            return "System controlled"
-        case .manual(let percent):
-            return "Manual · \(Format.percent(percent))"
-        case .profile(let percent):
-            let name = profileManager.activeProfile?.name ?? "Profile"
-            return "\(name) · \(percent.map(Format.percent) ?? "auto")"
-        }
+    private var statusColor: Color {
+        monitor.maxTemp > 0 ? Theme.temperature(monitor.maxTemp) : .secondary
     }
 
-    private var batteryIcon: String {
-        let battery = monitor.battery
-        if battery.isCharging { return "battery.100percent.bolt" }
-        switch battery.percentage {
-        case 88...: return "battery.100percent"
-        case 63...: return "battery.75percent"
-        case 38...: return "battery.50percent"
-        case 13...: return "battery.25percent"
-        default: return "battery.0percent"
+    private var heroIcon: String {
+        switch monitor.maxTemp {
+        case ..<55: return "thermometer.low"
+        case ..<75: return "thermometer.medium"
+        default: return "thermometer.high"
         }
     }
 
     // MARK: - 风扇
 
-    private var fanSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Fans") {
-                if monitor.isApplying {
-                    ProgressView()
-                        .controlSize(.mini)
-                }
+    private var fanCard: some View {
+        DashCard(icon: "fan.fill", title: "风扇", tint: Theme.cool) {
+            if monitor.isApplying {
+                ProgressView()
+                    .controlSize(.mini)
             }
-
-            VStack(spacing: 10) {
-                if monitor.fans.isEmpty {
-                    Text(monitor.isConnected ? "No fans detected on this Mac" : "Fan data unavailable")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                } else {
-                    ForEach(monitor.fans) { fan in
-                        FanRow(fan: fan)
-                    }
-                    Divider()
-                    if helper.canControlFans {
-                        SpeedControl(monitor: monitor, profileName: profileManager.activeProfile?.name)
-                    } else {
-                        HelperPrompt(helper: helper, onResult: showResult)
-                    }
-                }
+            if !monitor.fans.isEmpty {
+                Chip(text: "转速 \(Format.percent(monitor.averageFanPercent))")
             }
-            .card()
-
-            if let error = monitor.controlError {
-                Banner(message: error, style: .error, onDismiss: { monitor.controlError = nil })
-            } else if let message = monitor.controlMessage {
-                Banner(message: message, style: .success)
-                    .task(id: message) {
-                        try? await Task.sleep(for: .seconds(3))
-                        if monitor.controlMessage == message {
-                            withAnimation { monitor.controlMessage = nil }
+        } content: {
+            if monitor.fans.isEmpty {
+                Text(monitor.isConnected ? "这台 Mac 没有风扇" : "无法读取风扇数据")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                HStack(alignment: .lastTextBaseline) {
+                    BigValue(value: Format.rpm(averageRPM), unit: "RPM")
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        ForEach(monitor.fans) { fan in
+                            Text("风扇 \(fan.id + 1)  \(fan.isStopped ? "停转" : Format.rpm(fan.actualRPM))")
+                                .font(.system(size: 11))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .help("转速范围 \(Format.rpm(fan.minRPM))–\(Format.rpm(fan.maxRPM)) RPM · 目标 \(Format.rpm(fan.targetRPM)) RPM")
                         }
                     }
+                }
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Theme.mode(monitor.controlMode))
+                        .frame(width: 6, height: 6)
+                    Text(modeDescription)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                AreaSparkline(values: monitor.history.fanRPM, color: Theme.cool, minSpan: 1_500, floor: 0)
+
+                if helper.canControlFans {
+                    FanControls(monitor: monitor, profileName: profileManager.activeProfile?.name)
+                        .padding(.top, 2)
+                } else {
+                    HelperPrompt(helper: helper, onResult: showResult)
+                        .padding(.top, 2)
+                }
             }
+        }
+    }
+
+    private var averageRPM: Double {
+        guard !monitor.fans.isEmpty else { return 0 }
+        return monitor.fans.map(\.actualRPM).reduce(0, +) / Double(monitor.fans.count)
+    }
+
+    private var modeDescription: String {
+        switch monitor.controlMode {
+        case .system:
+            return "由系统自动调节"
+        case .manual(let percent):
+            return "手动设定 · \(Format.percent(percent))"
+        case .profile(let percent):
+            let name = profileManager.activeProfile?.name ?? "配置方案"
+            if let percent {
+                return "方案「\(name)」· \(Format.percent(percent))"
+            }
+            return "方案「\(name)」· 未达阈值，由系统调节"
+        }
+    }
+
+    @ViewBuilder
+    private var controlFeedback: some View {
+        if let error = monitor.controlError {
+            Banner(message: error, style: .error, onDismiss: { monitor.controlError = nil })
+        } else if let message = monitor.controlMessage {
+            Banner(message: message, style: .success)
+                .task(id: message) {
+                    try? await Task.sleep(for: .seconds(3))
+                    if monitor.controlMessage == message {
+                        withAnimation { monitor.controlMessage = nil }
+                    }
+                }
         }
     }
 
@@ -175,30 +201,93 @@ struct MenuBarView: View {
         }
     }
 
+    // MARK: - 温度
+
+    private var temperatureGrid: some View {
+        let grouped = Dictionary(grouping: monitor.temperatures, by: \.category)
+        // 有电池时电池温度显示在电池卡片中
+        let categories = TempInfo.TempCategory.allCases.filter { category in
+            grouped[category] != nil && !(category == .battery && monitor.battery.isPresent)
+        }
+        return LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+            spacing: 10
+        ) {
+            ForEach(categories, id: \.self) { category in
+                TemperatureCard(
+                    category: category,
+                    temps: grouped[category] ?? [],
+                    history: monitor.history.temperatures[category] ?? []
+                )
+            }
+        }
+    }
+
+    // MARK: - 电池
+
+    private var batteryCard: some View {
+        let battery = monitor.battery
+        let batteryTemp = monitor.temperatures.filter { $0.category == .battery }.map(\.value).max()
+        return DashCard(icon: "battery.75percent", title: "电池", tint: Theme.good) {
+            if let batteryTemp {
+                Chip(text: Format.temperature(batteryTemp, decimals: true))
+            }
+        } content: {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    BigValue(value: "\(battery.percentage)", unit: "%")
+                    Text(batteryDescription)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                RingGauge(
+                    fraction: Double(battery.percentage) / 100,
+                    color: batteryColor,
+                    icon: battery.isCharging ? "bolt.fill" : (battery.isPluggedIn ? "powerplug.fill" : "leaf.fill")
+                )
+            }
+        }
+    }
+
+    private var batteryDescription: String {
+        let battery = monitor.battery
+        if battery.isPluggedIn {
+            guard battery.isCharging else { return "已接电 · 未充电" }
+            return Format.duration(minutes: battery.timeToFull).map { "充电中 · 约 \($0) 充满" } ?? "已接电 · 充电中"
+        }
+        return Format.duration(minutes: battery.timeToEmpty).map { "电池供电 · 剩余约 \($0)" } ?? "电池供电"
+    }
+
+    private var batteryColor: Color {
+        switch monitor.battery.percentage {
+        case ..<20: return Theme.danger
+        case ..<40: return Theme.warm
+        default: return Theme.good
+        }
+    }
+
     // MARK: - 配置方案
 
-    private var profileSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Profiles") {
-                Button {
-                    editor.open(.newTemplate, isNew: true)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.caption.weight(.bold))
-                }
-                .buttonStyle(.borderless)
-                .help("New Profile")
+    private var profilesCard: some View {
+        DashCard(icon: "slider.horizontal.3", title: "配置方案", tint: Theme.accent) {
+            Button {
+                editor.open(.newTemplate, isNew: true)
+            } label: {
+                Chip(text: "新建", icon: "plus")
             }
-
+            .buttonStyle(.plain)
+            .help("新建配置方案")
+        } content: {
             if let error = profileManager.loadError ?? profileManager.saveError {
                 Banner(message: error, style: .warning)
             }
 
             if let deleted = deletedProfile {
                 Banner(
-                    message: "Deleted “\(deleted.profile.name)”",
+                    message: "已删除「\(deleted.profile.name)」",
                     style: .info,
-                    actionTitle: "Undo",
+                    actionTitle: "撤销",
                     action: {
                         profileManager.restoreProfile(deleted.profile, at: deleted.index)
                         deletedProfile = nil
@@ -213,14 +302,14 @@ struct MenuBarView: View {
                 }
             }
 
+            if profileManager.profiles.isEmpty {
+                Text("还没有配置方案，点击「新建」创建一个。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+            }
+
             VStack(spacing: 2) {
-                if profileManager.profiles.isEmpty {
-                    Text("No profiles yet. Click + to create one.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                }
                 ForEach(profileManager.profiles) { profile in
                     let isActive = profileManager.activeProfileID == profile.id
                     ProfileRow(
@@ -234,13 +323,13 @@ struct MenuBarView: View {
                     )
                 }
             }
-            .card(padding: 4)
+            .padding(.horizontal, -6)
         }
     }
 
     private var activeProfileStatus: String? {
         guard case .profile(let percent) = monitor.controlMode else { return nil }
-        return percent.map(Format.percent) ?? "Auto"
+        return percent.map(Format.percent) ?? "待命"
     }
 
     private func delete(_ profile: FanProfile) {
@@ -254,79 +343,16 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - 温度
-
-    private var temperatureSection: some View {
-        let grouped = Dictionary(grouping: monitor.temperatures, by: \.category)
-        let categories = TempInfo.TempCategory.allCases.filter { grouped[$0] != nil }
-        let expandable = categories.filter { (grouped[$0]?.count ?? 0) > 1 }
-        let allExpanded = !expandable.isEmpty && expandable.allSatisfy(expandedGroups.contains)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Temperatures") {
-                if !expandable.isEmpty {
-                    Button(allExpanded ? "Collapse All" : "Expand All") {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            setExpanded(allExpanded ? [] : Set(expandable))
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                }
-            }
-
-            VStack(spacing: 0) {
-                ForEach(categories, id: \.self) { category in
-                    TemperatureGroup(
-                        category: category,
-                        temps: grouped[category] ?? [],
-                        isExpanded: expansionBinding(for: category)
-                    )
-                    if category != categories.last {
-                        Divider()
-                            .padding(.leading, 34)
-                    }
-                }
-            }
-            .card(padding: 4)
-        }
-    }
-
-    private var expandedGroups: Set<TempInfo.TempCategory> {
-        Set(expandedGroupsRaw.split(separator: ",").compactMap { TempInfo.TempCategory(rawValue: String($0)) })
-    }
-
-    private func setExpanded(_ groups: Set<TempInfo.TempCategory>) {
-        expandedGroupsRaw = groups.map(\.rawValue).sorted().joined(separator: ",")
-    }
-
-    private func expansionBinding(for category: TempInfo.TempCategory) -> Binding<Bool> {
-        Binding(
-            get: { expandedGroups.contains(category) },
-            set: { expanded in
-                var groups = expandedGroups
-                if expanded {
-                    groups.insert(category)
-                } else {
-                    groups.remove(category)
-                }
-                setExpanded(groups)
-            }
-        )
-    }
-
     // MARK: - 底栏
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Button {
                 showSettings.toggle()
             } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 13))
+                Label("设置", systemImage: "gearshape")
             }
-            .buttonStyle(.borderless)
-            .help("Settings")
+            .buttonStyle(.plain)
             .popover(isPresented: $showSettings, arrowEdge: .bottom) {
                 SettingsView(monitor: monitor, helper: helper, onHelperResult: showResult)
             }
@@ -335,32 +361,35 @@ struct MenuBarView: View {
 
             Spacer()
 
-            Button("Quit MacFan") {
+            Button("退出") {
                 NSApplication.shared.terminate(nil)
             }
-            .buttonStyle(.borderless)
-            .font(.subheadline)
+            .buttonStyle(.plain)
             .keyboardShortcut("q")
         }
+        .font(.system(size: 12))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.black.opacity(0.22))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+        }
     }
 
     @ViewBuilder
     private var helperStatusLabel: some View {
         switch helper.status {
         case .installed:
-            Label("Helper ready", systemImage: "checkmark.shield.fill")
-                .foregroundStyle(.green)
-                .font(.caption)
+            Label("辅助程序就绪", systemImage: "checkmark.shield.fill")
+                .foregroundStyle(Theme.good)
         case .outdated:
-            Label("Helper outdated", systemImage: "exclamationmark.shield.fill")
-                .foregroundStyle(.orange)
-                .font(.caption)
+            Label("辅助程序需更新", systemImage: "exclamationmark.shield.fill")
+                .foregroundStyle(Theme.hot)
         case .notInstalled:
-            Label("Helper not installed", systemImage: "lock.shield")
-                .font(.caption)
+            Label("未安装辅助程序", systemImage: "lock.shield")
         case .checking:
             EmptyView()
         }
@@ -384,7 +413,7 @@ extension FanProfile {
     /// 新建配置方案时的起点
     static var newTemplate: FanProfile {
         FanProfile(
-            name: "New Profile",
+            name: "新方案",
             rules: [
                 FanRule(tempThreshold: 75, fanSpeedPercent: 80),
                 FanRule(tempThreshold: 60, fanSpeedPercent: 40),
@@ -393,84 +422,62 @@ extension FanProfile {
     }
 }
 
-// MARK: - 风扇行
+// MARK: - 风扇控制
 
-struct FanRow: View {
-    let fan: FanInfo
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: fan.isStopped ? "fan" : "fan.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(fan.isStopped ? Color.secondary : Color.accentColor)
-                .frame(width: 14)
-            Text("Fan \(fan.id + 1)")
-                .font(.callout)
-                .frame(width: 44, alignment: .leading)
-            LevelBar(fraction: fan.percent / 100, color: Palette.fanLevel(fan.percent))
-            Text(fan.isStopped ? "Off" : "\(Int(fan.actualRPM)) RPM")
-                .font(.callout)
-                .monospacedDigit()
-                .foregroundStyle(fan.isStopped ? .secondary : .primary)
-                .frame(width: 76, alignment: .trailing)
-        }
-        .help("Range \(Int(fan.minRPM))–\(Int(fan.maxRPM)) RPM · Target \(Int(fan.targetRPM)) RPM · \(fan.isManual ? "Manual" : "Automatic")")
-    }
-}
-
-// MARK: - 转速控制
-
-struct SpeedControl: View {
+struct FanControls: View {
     @ObservedObject var monitor: FanMonitor
     let profileName: String?
 
     @State private var sliderValue: Double = 0
     @State private var isDragging = false
 
-    private let presets: [Double] = [0, 25, 50, 75, 100]
+    private static let presets: [(title: String, percent: Double)] = [
+        ("安静", 25), ("均衡", 50), ("降温", 75), ("强冷", 100),
+    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Speed")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(Format.percent(isDragging || monitor.isApplying ? sliderValue : displayPercent))
-                    .font(.callout.weight(.semibold))
-                    .monospacedDigit()
-            }
-
-            // 不使用 step：macOS 会为每一档绘制刻度，101 个刻度挤成一条虚线
-            Slider(value: $sliderValue, in: 0...100) { editing in
-                isDragging = editing
-                if !editing {
-                    sliderValue = sliderValue.rounded()
-                    monitor.setAllFans(percent: sliderValue)
-                }
-            }
-            .controlSize(.small)
-            .tint(Palette.fanLevel(sliderValue))
-
-            HStack(spacing: 4) {
-                PresetButton(title: "Auto", isSelected: monitor.controlMode == .system) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                SegmentButton(title: "自动", isSelected: monitor.controlMode == .system, tint: Theme.good) {
                     monitor.restoreSystemControl()
                 }
-                .help("Let macOS control the fans")
-                ForEach(presets, id: \.self) { preset in
-                    PresetButton(
-                        title: preset == 100 ? "Max" : Format.percent(preset),
-                        isSelected: isManual(at: preset)
+                .help("交由 macOS 自动控制")
+                ForEach(Self.presets, id: \.percent) { preset in
+                    SegmentButton(
+                        title: preset.title,
+                        isSelected: isManual(at: preset.percent),
+                        tint: Theme.fanLevel(preset.percent)
                     ) {
-                        sliderValue = preset
-                        monitor.setAllFans(percent: preset)
+                        sliderValue = preset.percent
+                        monitor.setAllFans(percent: preset.percent)
+                    }
+                    .help("所有风扇 \(Format.percent(preset.percent)) 转速")
+                }
+            }
+
+            HStack(spacing: 10) {
+                Text("自定义")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                // 不使用 step：macOS 会为每一档绘制刻度，101 个刻度挤成一条虚线
+                Slider(value: $sliderValue, in: 0...100) { editing in
+                    isDragging = editing
+                    if !editing {
+                        sliderValue = sliderValue.rounded()
+                        monitor.setAllFans(percent: sliderValue)
                     }
                 }
+                .controlSize(.mini)
+                .tint(Theme.fanLevel(sliderValue))
+                Text(Format.percent(isDragging || monitor.isApplying ? sliderValue : displayPercent))
+                    .font(.system(size: 12, weight: .semibold))
+                    .monospacedDigit()
+                    .frame(width: 36, alignment: .trailing)
             }
 
             if let profileName {
-                Text("“\(profileName)” is controlling the fans. Picking a speed switches to manual.")
-                    .font(.caption)
+                Text("方案「\(profileName)」正在控制风扇，手动调速会停用该方案。")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -504,31 +511,6 @@ struct SpeedControl: View {
     }
 }
 
-struct PresetButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.accentColor : Color.primary.opacity(isHovering ? 0.12 : 0.07))
-        )
-        .onHover { isHovering = $0 }
-    }
-}
-
 struct HelperPrompt: View {
     @ObservedObject var helper: HelperController
     let onResult: (Bool, String) -> Void
@@ -539,23 +521,25 @@ struct HelperPrompt: View {
             HStack(spacing: 6) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Checking helper…")
-                    .font(.subheadline)
+                Text("正在检查辅助程序…")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         case .notInstalled, .outdated:
             let isUpdate = helper.status == .outdated
             VStack(alignment: .leading, spacing: 8) {
-                Label(
-                    isUpdate ? "Helper update required" : "One-time setup",
-                    systemImage: isUpdate ? "arrow.triangle.2.circlepath" : "lock.shield"
-                )
-                .font(.callout.weight(.semibold))
+                HStack(spacing: 6) {
+                    Image(systemName: isUpdate ? "arrow.triangle.2.circlepath" : "lock.shield.fill")
+                        .foregroundStyle(Theme.warm)
+                    Text(isUpdate ? "辅助程序需要更新" : "需要一次性授权")
+                        .font(.system(size: 13, weight: .semibold))
+                }
                 Text(isUpdate
-                     ? "MacFan was updated. Reinstall the helper so it matches this version."
-                     : "Changing fan speed needs a small privileged helper. You'll enter your password once.")
-                    .font(.caption)
+                     ? "MacFan 已更新，请重新安装辅助程序以匹配当前版本。"
+                     : "调节风扇转速需要安装一个特权辅助程序，只需输入一次密码。")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
@@ -566,16 +550,103 @@ struct HelperPrompt: View {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        Text(isUpdate ? "Update Helper" : "Install Helper")
+                        Text(isUpdate ? "更新辅助程序" : "安装辅助程序")
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .foregroundStyle(.white)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.accent))
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 .disabled(helper.isWorking)
             }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Theme.warm.opacity(0.1))
+            )
         case .installed:
             EmptyView()
         }
+    }
+}
+
+// MARK: - 温度卡片
+
+struct TemperatureCard: View {
+    let category: TempInfo.TempCategory
+    let temps: [TempInfo]
+    let history: [Double]
+
+    @State private var showDetails = false
+
+    private var hottest: TempInfo? { temps.max { $0.value < $1.value } }
+
+    var body: some View {
+        let value = hottest?.value ?? 0
+        let isHot = value >= 75
+        DashCard(icon: category.icon, title: category.displayName, tint: category.tint) {
+            Chip(text: Theme.temperatureStatus(value), tint: isHot ? Theme.temperature(value) : nil)
+        } content: {
+            BigValue(
+                value: String(format: "%.1f", value),
+                unit: "°C",
+                size: 22,
+                color: isHot ? Theme.temperature(value) : .primary
+            )
+            if category == .cpu {
+                BarSparkline(values: history, color: category.tint, minSpan: 20, floor: nil)
+            } else {
+                AreaSparkline(values: history, color: category.tint, minSpan: 8, height: 22)
+            }
+            Text(caption)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if temps.count > 1 { showDetails.toggle() }
+        }
+        .popover(isPresented: $showDetails, arrowEdge: .bottom) {
+            SensorList(category: category, temps: temps)
+        }
+        .help(temps.count > 1 ? "点击查看全部传感器" : (hottest?.name ?? ""))
+    }
+
+    private var caption: String {
+        guard let hottest else { return "" }
+        return temps.count > 1 ? "\(temps.count) 个传感器 · \(hottest.name)" : hottest.name
+    }
+}
+
+struct SensorList: View {
+    let category: TempInfo.TempCategory
+    let temps: [TempInfo]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("\(category.displayName)传感器")
+                .font(.system(size: 12, weight: .semibold))
+            ForEach(temps.sorted { $0.value > $1.value }) { temp in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Theme.temperature(temp.value))
+                        .frame(width: 6, height: 6)
+                    Text(temp.name)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 12)
+                    Text(Format.temperature(temp.value, decimals: true))
+                        .monospacedDigit()
+                }
+                .font(.system(size: 12))
+            }
+        }
+        .padding(12)
+        .frame(width: 220)
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -596,25 +667,25 @@ struct ProfileRow: View {
         HStack(spacing: 10) {
             Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 15))
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.6))
+                .foregroundStyle(isActive ? Theme.accent : Color.secondary.opacity(0.5))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
                     Text(profile.name)
-                        .font(.callout.weight(isActive ? .semibold : .regular))
+                        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
                         .lineLimit(1)
                     if let label = profile.condition.label {
-                        Pill(text: label, icon: profile.condition.icon)
+                        Chip(text: label, icon: profile.condition.icon)
                     }
                     if let status {
-                        Pill(text: status, color: .accentColor)
-                            .help(status == "Auto"
-                                  ? "No rule matches right now, so macOS controls the fans"
-                                  : "Current fan speed set by this profile")
+                        Chip(text: status, tint: Theme.accent)
+                            .help(status == "待命"
+                                  ? "当前温度未达到任何规则，由系统控制风扇"
+                                  : "该方案当前设定的风扇转速")
                     }
                 }
                 Text(profile.ruleSummary)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -624,122 +695,33 @@ struct ProfileRow: View {
             Menu {
                 menuItems
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .opacity(isHovering ? 1 : 0.45)
-            .help("More")
+            .help("更多操作")
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(isHovering ? 0.06 : 0))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isActive ? Theme.accent.opacity(0.16) : Color.white.opacity(isHovering ? 0.06 : 0))
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onToggle)
         .onHover { isHovering = $0 }
         .contextMenu { menuItems }
-        .help(isActive ? "Click to stop using this profile" : "Click to use this profile")
+        .help(isActive ? "点击停用此方案" : "点击启用此方案")
     }
 
     @ViewBuilder
     private var menuItems: some View {
-        Button("Edit…", action: onEdit)
-        Button("Duplicate", action: onDuplicate)
+        Button("编辑…", action: onEdit)
+        Button("复制", action: onDuplicate)
         Divider()
-        Button("Delete", role: .destructive, action: onDelete)
-    }
-}
-
-// MARK: - 温度分组
-
-struct TemperatureGroup: View {
-    let category: TempInfo.TempCategory
-    let temps: [TempInfo]
-    @Binding var isExpanded: Bool
-
-    private var hottest: TempInfo? { temps.max { $0.value < $1.value } }
-    private var isExpandable: Bool { temps.count > 1 }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                guard isExpandable else { return }
-                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .frame(width: 8)
-                        .opacity(isExpandable ? 1 : 0)
-                    Image(systemName: category.icon)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16)
-                    Text(category.rawValue)
-                        .font(.callout)
-                    if isExpandable {
-                        Text("\(temps.count)")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else if let only = temps.first {
-                        Text(only.name)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    if let hottest {
-                        TemperatureValue(value: hottest.value, emphasized: true)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded && isExpandable {
-                VStack(spacing: 0) {
-                    ForEach(temps) { temp in
-                        HStack(spacing: 8) {
-                            Text(temp.name)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                            Spacer()
-                            TemperatureValue(value: temp.value, emphasized: false)
-                        }
-                        .padding(.leading, 42)
-                        .padding(.trailing, 8)
-                        .padding(.vertical, 3)
-                    }
-                }
-                .padding(.bottom, 4)
-            }
-        }
-    }
-}
-
-struct TemperatureValue: View {
-    let value: Double
-    let emphasized: Bool
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(Palette.temperature(value))
-                .frame(width: 6, height: 6)
-            Text(Format.temperature(value, decimals: true))
-                .font(emphasized ? .callout.weight(.medium) : .subheadline)
-                .monospacedDigit()
-                .foregroundStyle(Palette.temperatureText(value))
-        }
+        Button("删除", role: .destructive, action: onDelete)
     }
 }

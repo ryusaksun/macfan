@@ -71,7 +71,7 @@ public final class ProfileManager: ObservableObject {
         guard let idx = profiles.firstIndex(where: { $0.id == id }) else { return nil }
         var copy = profiles[idx]
         copy.id = UUID()
-        copy.name = "\(copy.name) Copy"
+        copy.name = "\(copy.name) 副本"
         copy.rules = copy.rules.map { FanRule(tempThreshold: $0.tempThreshold, fanSpeedPercent: $0.fanSpeedPercent) }
         profiles.insert(copy, at: idx + 1)
         save()
