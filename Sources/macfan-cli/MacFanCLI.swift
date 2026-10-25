@@ -7,7 +7,7 @@ struct MacFanCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "macfan-cli",
         abstract: "macOS 风扇控制工具 (Apple Silicon)",
-        version: "0.1.0",
+        version: "0.4.0",
         subcommands: [
             Status.self,
             List.self,
@@ -52,15 +52,14 @@ struct Status: ParsableCommand {
                 let max = try smc.readFanSpeed(SMCKeys.fanMaxSpeed(i))
 
                 let mode: String
-                do {
-                    let modeVal = try smc.readUInt8(SMCKeys.fanMode(i))
+                if let modeVal = readFanMode(smc, fanID: i) {
                     switch modeVal {
                     case 0: mode = "自动"
                     case 1: mode = "手动"
                     case 3: mode = "系统"
                     default: mode = "未知(\(modeVal))"
                     }
-                } catch {
+                } else {
                     mode = "未知"
                 }
 
@@ -206,6 +205,7 @@ struct Set: ParsableCommand {
     var rpm: Int
 
     func run() throws {
+        try requireRoot()
         let smc = SMCKit()
         try smc.open()
         defer { smc.close() }
@@ -247,6 +247,7 @@ struct Max: ParsableCommand {
     )
 
     func run() throws {
+        try requireRoot()
         let smc = SMCKit()
         try smc.open()
         defer { smc.close() }
@@ -280,6 +281,7 @@ struct Auto: ParsableCommand {
     )
 
     func run() throws {
+        try requireRoot()
         let smc = SMCKit()
         try smc.open()
         defer { smc.close() }
@@ -407,6 +409,24 @@ struct Debug: ParsableCommand {
 }
 
 // MARK: - 辅助函数
+
+/// SMC 写入需要 root；不提前检查的话每次写入会重试约 10 秒才失败
+func requireRoot() throws {
+    guard geteuid() == 0 else {
+        print("❌ 写入风扇设置需要 root 权限，请使用 sudo 运行")
+        throw ExitCode.failure
+    }
+}
+
+/// 读取风扇模式（兼容 M5 Pro 的 F0md 与旧款的 F0Md）
+func readFanMode(_ smc: SMCKit, fanID: Int) -> UInt8? {
+    for key in [SMCKeys.fanMode(fanID), SMCKeys.fanModeLegacy(fanID)] {
+        if let value = try? smc.readUInt8(key) {
+            return value
+        }
+    }
+    return nil
+}
 
 /// 生成进度条
 func makeProgressBar(percent: Double, width: Int) -> String {

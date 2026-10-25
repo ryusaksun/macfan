@@ -62,6 +62,62 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(manager.profiles.count, 3)
     }
 
+    func testDeleteAndRestoreKeepsPosition() throws {
+        let location = try makeLocation()
+        let manager = ProfileManager(fileURL: location.file)
+        let middle = manager.profiles[1]
+        manager.setActive(middle.id)
+
+        let removed = try XCTUnwrap(manager.deleteProfile(middle.id))
+        XCTAssertEqual(removed.index, 1)
+        XCTAssertTrue(removed.wasActive)
+        XCTAssertNil(manager.activeProfileID)
+
+        manager.restoreProfile(removed.profile, at: removed.index)
+        XCTAssertEqual(manager.profiles[1], middle)
+        XCTAssertEqual(ProfileManager(fileURL: location.file).profiles.map(\.id), manager.profiles.map(\.id))
+    }
+
+    func testDuplicateInsertsCopyAfterOriginal() throws {
+        let location = try makeLocation()
+        let manager = ProfileManager(fileURL: location.file)
+        let original = manager.profiles[0]
+
+        let copy = try XCTUnwrap(manager.duplicateProfile(original.id))
+
+        XCTAssertNotEqual(copy.id, original.id)
+        XCTAssertEqual(manager.profiles[1].id, copy.id)
+        XCTAssertEqual(copy.rules.map(\.fanSpeedPercent), original.rules.map(\.fanSpeedPercent))
+    }
+
+    func testUpsertAddsThenUpdates() throws {
+        let location = try makeLocation()
+        let manager = ProfileManager(fileURL: location.file)
+        var profile = FanProfile(name: "New", rules: [FanRule(tempThreshold: 60, fanSpeedPercent: 40)])
+
+        manager.upsertProfile(profile)
+        profile.name = "Renamed"
+        manager.upsertProfile(profile)
+
+        XCTAssertEqual(manager.profiles.count, 4)
+        XCTAssertEqual(manager.profiles.last?.name, "Renamed")
+    }
+
+    func testHysteresisKeepsRuleUntilTemperatureDropsBelowMargin() throws {
+        let location = try makeLocation()
+        let manager = ProfileManager(fileURL: location.file)
+        let quiet = try XCTUnwrap(manager.profiles.first { $0.name == "Quiet" })
+        manager.setActive(quiet.id)
+        let battery = BatteryInfo()
+
+        XCTAssertEqual(manager.evaluateActiveProfile(maxTemp: 72, battery: battery), 60)
+        XCTAssertEqual(manager.evaluateActiveProfile(maxTemp: 68, battery: battery), 60)
+        XCTAssertEqual(manager.evaluateActiveProfile(maxTemp: 66, battery: battery), 30)
+        XCTAssertEqual(manager.evaluateActiveProfile(maxTemp: 69, battery: battery), 30)
+        XCTAssertEqual(manager.evaluateActiveProfile(maxTemp: 70, battery: battery), 60)
+        XCTAssertNil(manager.evaluateActiveProfile(maxTemp: 50, battery: battery))
+    }
+
     private func makeLocation() throws -> (directory: URL, file: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacFanTests-\(UUID().uuidString)", isDirectory: true)

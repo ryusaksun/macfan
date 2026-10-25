@@ -125,6 +125,8 @@ public final class SMCKit: @unchecked Sendable {
     private var connection: io_connect_t = 0
     private var isOpen = false
     private let lock = NSLock()
+    /// key 的类型和大小不会变化，缓存后每次读写可少一次 IOKit 调用
+    private var keyInfoCache: [FourCharCode: SMCKeyDataKeyInfo] = [:]
 
     public init() {}
 
@@ -162,6 +164,7 @@ public final class SMCKit: @unchecked Sendable {
             connection = 0
             isOpen = false
         }
+        keyInfoCache.removeAll()
     }
 
     deinit {
@@ -170,7 +173,7 @@ public final class SMCKit: @unchecked Sendable {
 
     // MARK: - 底层调用
 
-    private func callSMC(inputData: inout SMCKeyData) throws -> SMCKeyData {
+    private func callSMC(inputData: inout SMCKeyData, isWrite: Bool = false) throws -> SMCKeyData {
         var outputData = SMCKeyData()
         var outputSize = MemoryLayout<SMCKeyData>.stride
 
@@ -184,28 +187,47 @@ public final class SMCKit: @unchecked Sendable {
         )
 
         guard result == kIOReturnSuccess else {
-            throw SMCError.readFailed("call", result)
+            let keyName = inputData.key.toString
+            throw isWrite ? SMCError.writeFailed(keyName, result) : SMCError.readFailed(keyName, result)
         }
 
         return outputData
     }
 
-    /// 获取 key 的信息（数据类型和大小）
+    /// 获取 key 的信息（数据类型和大小）。不存在的 key 返回 dataSize = 0。
     public func getKeyInfo(key: FourCharCode) throws -> SMCKeyDataKeyInfo {
+        lock.lock()
+        let cached = keyInfoCache[key]
+        lock.unlock()
+        if let cached { return cached }
+
         var inputData = SMCKeyData()
         inputData.key = key
         inputData.data8 = SMCSelector.kSMCGetKeyInfo.rawValue
 
-        let outputData = try callSMC(inputData: &inputData)
-        return outputData.keyInfo
+        let info = try callSMC(inputData: &inputData).keyInfo
+        // 只缓存存在的 key，避免把偶发的失败结果永久记住
+        if info.dataSize > 0 {
+            lock.lock()
+            keyInfoCache[key] = info
+            lock.unlock()
+        }
+        return info
+    }
+
+    /// 获取存在的 key 的信息，不存在时抛出 keyNotFound
+    private func existingKeyInfo(_ keyStr: String) throws -> (key: FourCharCode, info: SMCKeyDataKeyInfo) {
+        let key = FourCharCode(fromString: keyStr)
+        let info = try getKeyInfo(key: key)
+        guard info.dataSize > 0 else { throw SMCError.keyNotFound(keyStr) }
+        return (key, info)
     }
 
     // MARK: - 读取
 
     /// 读取 SMC key 的原始值
     public func readKey(_ keyStr: String) throws -> SMCVal {
-        let key = FourCharCode(fromString: keyStr)
-        let keyInfo = try getKeyInfo(key: key)
+        let (key, keyInfo) = try existingKeyInfo(keyStr)
 
         var inputData = SMCKeyData()
         inputData.key = key
@@ -232,8 +254,7 @@ public final class SMCKit: @unchecked Sendable {
 
     /// 写入 SMC key
     public func writeKey(_ keyStr: String, dataType: FourCharCode, bytes: [UInt8]) throws {
-        let key = FourCharCode(fromString: keyStr)
-        let keyInfo = try getKeyInfo(key: key)
+        let (key, keyInfo) = try existingKeyInfo(keyStr)
 
         var inputData = SMCKeyData()
         inputData.key = key
@@ -248,50 +269,11 @@ public final class SMCKit: @unchecked Sendable {
             }
         }
 
-        let output = try callSMC(inputData: &inputData)
+        let output = try callSMC(inputData: &inputData, isWrite: true)
 
         if output.result != 0 {
             throw SMCError.writeFailed(keyStr, kern_return_t(output.result))
         }
-    }
-
-    /// 写入 SMC key (带详细调试输出)
-    public func writeKeyDebug(_ keyStr: String, dataType: FourCharCode, bytes: [UInt8]) -> (ioResult: kern_return_t, smcResult: UInt8) {
-        let key = FourCharCode(fromString: keyStr)
-
-        let keyInfo: SMCKeyDataKeyInfo
-        do {
-            keyInfo = try getKeyInfo(key: key)
-        } catch {
-            return (kIOReturnError, 0xFF)
-        }
-
-        var inputData = SMCKeyData()
-        inputData.key = key
-        inputData.data8 = SMCSelector.kSMCWriteKey.rawValue
-        inputData.keyInfo.dataSize = keyInfo.dataSize
-
-        withUnsafeMutablePointer(to: &inputData.bytes) { ptr in
-            ptr.withMemoryRebound(to: UInt8.self, capacity: 32) { buf in
-                for i in 0..<min(bytes.count, 32) {
-                    buf[i] = bytes[i]
-                }
-            }
-        }
-
-        var outputData = SMCKeyData()
-        var outputSize = MemoryLayout<SMCKeyData>.stride
-
-        let ioResult = IOConnectCallStructMethod(
-            connection,
-            UInt32(SMCSelector.kSMCHandleYPCEvent.rawValue),
-            &inputData,
-            MemoryLayout<SMCKeyData>.stride,
-            &outputData,
-            &outputSize
-        )
-
-        return (ioResult, outputData.result)
     }
 
     /// 获取索引位置的 key 名

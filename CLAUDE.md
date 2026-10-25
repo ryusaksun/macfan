@@ -96,7 +96,7 @@ All values use `flt` (IEEE 754 float, little-endian). Older Macs may use `sp78` 
 | Directory | Target | Description |
 |-----------|--------|-------------|
 | `Sources/MacFanCore/` | Shared library | SMCKit, DataTypes, SMCKeys, FanMonitor, FanProfile, BatteryService, HelperProtocol |
-| `Sources/MacFanApp/` | GUI app (MenuBarExtra) | SwiftUI views, HelperInstaller, Settings, ProfileEditView |
+| `Sources/MacFanApp/` | GUI app (MenuBarExtra) | MenuBarView, Components (shared styles), HelperInstaller/HelperController, SettingsView, ProfileEditView/ProfileEditorController |
 | `Sources/MacFanHelper/` | Root daemon | XPC listener (HelperDelegate), SMCWriter (fan control with retry logic) |
 | `Sources/macfan-cli/` | CLI tool | ArgumentParser commands: status/list/set/max/auto/debug |
 
@@ -135,10 +135,12 @@ XPC security: `HelperDelegate` validates the Apple signing chain, team ID (`2FJF
 
 1. `HelperInstaller.findHelperBinary()` locates `MacFanHelper` in app bundle's `Contents/MacOS/`
 2. Writes a shell script to temp file (UUID in filename to avoid races)
-3. Invokes via `NSAppleScript` with `administrator privileges` (one password prompt)
-4. Script copies binary to `/Library/PrivilegedHelperTools/`, writes plist to `/Library/LaunchDaemons/`, bootstraps via `launchctl`
+3. Invokes via `NSAppleScript` with `administrator privileges` (one password prompt, main thread only)
+4. Script boots out the old daemon **before** replacing the binary (overwriting a running signed executable gets it killed), copies it to `/Library/PrivilegedHelperTools/`, writes the plist to `/Library/LaunchDaemons/`, then retries `launchctl bootstrap` a few times (bootout is asynchronous)
 
-**Important**: After rebuilding the helper binary, the installed copy at `/Library/PrivilegedHelperTools/` must be updated and the daemon restarted. The app shows the Install Helper button when the service is absent or the installed binary differs from the bundled helper.
+`HelperInstaller.currentStatus()` spawns `launchctl` and compares binaries, so it must run off the main thread — `HelperController.refresh()` does this. Never call it from a view initializer or `@State` default value (views are re-initialized on every monitor update).
+
+**Important**: After rebuilding the helper binary, the installed copy at `/Library/PrivilegedHelperTools/` must be updated and the daemon restarted. The app shows Install/Update Helper when the service is absent or the installed binary differs from the bundled helper. The helper exits on SIGTERM via `exit()` — `RunLoop.run()` restarts after `CFRunLoopStop`, so stopping the run loop does not end the process.
 
 ## Code Signing
 
@@ -152,11 +154,20 @@ XPC security: `HelperDelegate` validates the Apple signing chain, team ID (`2FJF
 ## GUI Structure
 
 The app uses `MenuBarExtra` with `.window` style. Key UI components:
-- **UnifiedFanControl**: Single control panel for all fans — slider + preset buttons (0%/25%/50%/75%/100%). Replaces per-fan controls.
-- **ProfileRow**: Shows profile name, rule count, condition badge. Tap to activate/deactivate.
-- **ProfileEditView**: Opens in a floating NSPanel (stored in `editorPanel` to prevent premature release).
-- **FanMonitor.fanResetCounter**: Published counter incremented on `resetAllFans()` — UI rows observe this to sync manual/auto state.
+- **FanMonitor.controlMode** (`.system` / `.manual(percent)` / `.profile(percent?)`): single source of truth for what the UI shows. Views never keep their own manual/auto flags.
+- **SpeedControl**: One control for all fans — slider (applies on release) + Auto/0/25/50/75/Max presets. Do not use `Slider(step:)`; macOS draws a tick per step.
+- **ProfileRow**: Whole row toggles activation; ⋯ menu / context menu for Edit, Duplicate, Delete (delete offers Undo instead of a confirmation dialog).
+- **ProfileEditorController**: Opens `ProfileEditView` in a floating NSPanel. New profiles are only added on Create. Saving calls `makeFirstResponder(nil)` first so a focused number field commits its value.
+- **TemperatureGroup**: Sensors grouped by category, collapsed to the hottest reading; expansion persists in `@AppStorage("expandedTemperatureGroups")`.
+- **Menu bar label**: Rendered to a template `NSImage` via `ImageRenderer` (`MenuBarIcon`) — a `Label`/`HStack` label does not reliably show both icon and text.
+
+### Fan control ownership (FanMonitor)
+`manualOwner` records who put the hardware into manual mode:
+- `.user` (slider/presets) — kept until the user picks Auto or a profile. Picking a speed deactivates the active profile.
+- `.profile` — restored to auto when the active profile stops matching or is deactivated.
+- Each refresh reads `F{id}md` and reconciles: all fans back to auto clears the owner (and re-applies an active profile); manual mode the app didn't set (CLI, crash leftovers) is adopted.
+- Profile requests are not started while a user request is in flight; stale completions are ignored via generation counters.
 
 ## Profile System
 
-Profiles persist to `~/Library/Application Support/MacFan/profiles.json`. Rules are evaluated every 2s: sorted by temp threshold descending, first matching rule (temp ≥ threshold) determines fan speed %. Includes 5°C hysteresis to prevent oscillation near thresholds. Conditions: Always / Charging / OnBattery / BatteryBelow(X%).
+Profiles persist to `~/Library/Application Support/MacFan/profiles.json`. Rules are evaluated every 2s: sorted by temp threshold descending, first matching rule (temp ≥ threshold) determines fan speed %. Includes 3°C hysteresis to prevent oscillation near thresholds. Conditions: Always / Charging / OnBattery / BatteryBelow(X%). Activation (the row checkmark) is the only on/off switch; the editor always saves `isEnabled = true`.

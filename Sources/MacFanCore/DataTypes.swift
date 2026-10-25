@@ -24,12 +24,15 @@ public enum DataTypes {
 
     public static func decodeSP78(_ bytes: [UInt8]) -> Double {
         guard bytes.count >= 2 else { return 0 }
-        let raw = Int16(UInt16(bytes[0]) << 8 | UInt16(bytes[1]))
+        // 用 bitPattern 解释符号位；Int16(UInt16) 在高位为 1 时会崩溃
+        let raw = Int16(bitPattern: UInt16(bytes[0]) << 8 | UInt16(bytes[1]))
         return Double(raw) / 256.0
     }
 
     public static func encodeSP78(_ value: Double) -> [UInt8] {
-        let raw = Int16(value * 256.0)
+        // 越界或 NaN 直接转换会触发运行时陷阱（Helper 以 root 运行，必须避免崩溃）
+        let scaled = value.isFinite ? (value * 256.0).rounded() : 0
+        let raw = Int16(max(Double(Int16.min), min(Double(Int16.max), scaled)))
         return [UInt8(truncatingIfNeeded: raw >> 8),
                 UInt8(truncatingIfNeeded: raw & 0xFF)]
     }
@@ -43,7 +46,8 @@ public enum DataTypes {
     }
 
     public static func encodeFPE2(_ value: Double) -> [UInt8] {
-        let raw = UInt16(value * 4.0)
+        let scaled = value.isFinite ? (value * 4.0).rounded() : 0
+        let raw = UInt16(max(0, min(Double(UInt16.max), scaled)))
         return [UInt8(raw >> 8), UInt8(raw & 0xFF)]
     }
 

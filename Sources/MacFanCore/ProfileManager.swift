@@ -56,16 +56,51 @@ public final class ProfileManager: ObservableObject {
         }
     }
 
-    public func deleteProfile(_ id: UUID) {
-        profiles.removeAll { $0.id == id }
-        if activeProfileID == id {
+    /// 已存在则更新，否则追加
+    public func upsertProfile(_ profile: FanProfile) {
+        if profiles.contains(where: { $0.id == profile.id }) {
+            updateProfile(profile)
+        } else {
+            addProfile(profile)
+        }
+    }
+
+    /// 复制配置方案并插入到原方案之后，返回副本
+    @discardableResult
+    public func duplicateProfile(_ id: UUID) -> FanProfile? {
+        guard let idx = profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        var copy = profiles[idx]
+        copy.id = UUID()
+        copy.name = "\(copy.name) Copy"
+        copy.rules = copy.rules.map { FanRule(tempThreshold: $0.tempThreshold, fanSpeedPercent: $0.fanSpeedPercent) }
+        profiles.insert(copy, at: idx + 1)
+        save()
+        return copy
+    }
+
+    /// 删除配置方案，返回被删除的方案及其位置（用于撤销）
+    @discardableResult
+    public func deleteProfile(_ id: UUID) -> (profile: FanProfile, index: Int, wasActive: Bool)? {
+        guard let idx = profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        let removed = profiles.remove(at: idx)
+        let wasActive = activeProfileID == id
+        if wasActive {
             activeProfileID = nil
             resetEvaluationState()
         }
         save()
+        return (removed, idx, wasActive)
+    }
+
+    /// 撤销删除：把方案放回原位置
+    public func restoreProfile(_ profile: FanProfile, at index: Int) {
+        guard !profiles.contains(where: { $0.id == profile.id }) else { return }
+        profiles.insert(profile, at: min(max(0, index), profiles.count))
+        save()
     }
 
     public func setActive(_ id: UUID?) {
+        guard activeProfileID != id else { return }
         activeProfileID = id
         resetEvaluationState()
         save()

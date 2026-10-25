@@ -29,10 +29,8 @@ targets:
     dependencies:
       - target: MacFanHelper
     postBuildScripts:
-      - name: "Embed Helper and LaunchDaemon plist"
+      - name: "Embed Helper"
         script: |
-          mkdir -p "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons"
-          cp "${SRCROOT}/Sources/MacFanHelper/launchd.plist" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons/com.macfan.helper.plist"
           cp "${BUILT_PRODUCTS_DIR}/MacFanHelper" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"
           if [ "${CODE_SIGNING_ALLOWED}" = "YES" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY}" ]; then
             /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --timestamp=none "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/MacOS/MacFanHelper"

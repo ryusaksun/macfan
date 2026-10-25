@@ -3,7 +3,7 @@ import IOKit.ps
 
 // MARK: - 电池信息模型
 
-public struct BatteryInfo: Sendable {
+public struct BatteryInfo: Sendable, Equatable {
     public var isPresent: Bool = false
     public var isCharging: Bool = false
     public var isPluggedIn: Bool = false
