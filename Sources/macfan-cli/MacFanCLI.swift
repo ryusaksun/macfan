@@ -7,7 +7,7 @@ struct MacFanCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "macfan-cli",
         abstract: "macOS 风扇控制工具 (Apple Silicon)",
-        version: "0.4.0",
+        version: "0.5.0",
         subcommands: [
             Status.self,
             List.self,
