@@ -153,7 +153,7 @@ XPC security: `HelperDelegate` validates the Apple signing chain, team ID (`2FJF
 
 ## GUI Structure
 
-The app uses `MenuBarExtra` with `.window` style. The panel is a Chinese, always-dark dashboard (warm radial background, cards in `Components.swift`: `DashCard`, `Chip`, `BigValue`, `BarSparkline`/`AreaSparkline`, `RingGauge`, `SegmentButton`). Layout: hero (max temp + status word + chips) → fan card → temperature cards (2-column grid, battery temps go into the battery card) → battery card → profiles card. Key UI components:
+The app uses `MenuBarExtra` with `.window` style. The panel is a Chinese, always-dark dashboard (warm radial background, cards in `Components.swift`: `DashCard`, `Chip`, `BigValue`, `BarSparkline`/`AreaSparkline`, `SegmentMeter`, `SegmentButton`). Layout: fan card → sensor cards (2 columns: temperature categories with the battery card placed before 其他, battery temps go into the battery card; an odd last card spans the full row, cards in a row share one height) → profiles card. Key UI components:
 - **FanMonitor.controlMode** (`.system` / `.manual(percent)` / `.profile(percent?)`): single source of truth for what the UI shows. Views never keep their own manual/auto flags.
 - **FanControls**: One control for all fans — segments 自动 / 安静 25% / 均衡 50% / 降温 75% / 强冷 100% plus a custom slider (applies on release). Do not use `Slider(step:)`; macOS draws a tick per step.
 - **FanMonitor.history** (`MonitorHistory`): last 60 samples of average fan RPM and per-category max temperature, used by the sparklines.

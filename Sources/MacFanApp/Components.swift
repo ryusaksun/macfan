@@ -89,18 +89,6 @@ enum Format {
     }
 }
 
-enum SystemInfo {
-    /// 例如 "M5 Pro"
-    static let chipName: String? = {
-        var size = 0
-        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0 else { return nil }
-        var buffer = [CChar](repeating: 0, count: size)
-        guard sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0) == 0 else { return nil }
-        let name = String(cString: buffer).replacingOccurrences(of: "Apple ", with: "")
-        return name.isEmpty ? nil : name
-    }()
-}
-
 extension TempInfo.TempCategory {
     var displayName: String {
         switch self {
@@ -195,7 +183,8 @@ struct DashCard<Accessory: View, Content: View>: View {
             content
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // maxHeight 让并排的卡片能拉伸到同一行高；在 ScrollView 中不会撑高
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Theme.cardFill)
@@ -356,29 +345,23 @@ struct AreaSparkline: View {
     }
 }
 
-/// 圆环进度
-struct RingGauge: View {
+/// 分段电量条，与 BarSparkline 的柱子同一风格
+struct SegmentMeter: View {
     let fraction: Double
     var color: Color
-    var icon: String?
-    var size: CGFloat = 40
+    var segments = 26
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Theme.track, lineWidth: 4)
-            Circle()
-                .trim(from: 0, to: min(1, max(0, fraction)))
-                .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: size * 0.32, weight: .semibold))
-                    .foregroundStyle(color)
+        let clamped = min(1, max(0, fraction))
+        let lit = clamped > 0 ? max(1, Int((clamped * Double(segments)).rounded())) : 0
+        HStack(spacing: 2) {
+            ForEach(0..<segments, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1.2, style: .continuous)
+                    .fill(index < lit ? color : Theme.track)
             }
         }
-        .frame(width: size, height: size)
-        .animation(.easeOut(duration: 0.4), value: fraction)
+        .frame(height: 22)
+        .animation(.easeOut(duration: 0.4), value: lit)
     }
 }
 

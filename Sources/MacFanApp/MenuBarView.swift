@@ -14,16 +14,12 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    hero
                     if let error = monitor.lastError {
                         Banner(message: "无法读取传感器：\(error)", style: .error)
                     }
                     fanCard
                     controlFeedback
-                    temperatureGrid
-                    if monitor.battery.isPresent {
-                        batteryCard
-                    }
+                    sensorGrid
                     profilesCard
                 }
                 .padding(12)
@@ -49,56 +45,6 @@ struct MenuBarView: View {
         let screenLimit = (NSScreen.main?.visibleFrame.height ?? 900) - 100
         let limit = min(880, max(360, screenLimit))
         return min(max(contentHeight, 160), limit)
-    }
-
-    // MARK: - 顶部概览
-
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .center, spacing: 8) {
-                Image(systemName: heroIcon)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(statusColor)
-                if monitor.maxTemp > 0 {
-                    BigValue(value: "\(Int(monitor.maxTemp.rounded()))", unit: "°C", size: 34)
-                    Text(Theme.temperatureStatus(monitor.maxTemp))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(statusColor)
-                        .padding(.leading, 2)
-                } else {
-                    BigValue(value: "--", unit: "°C", size: 34)
-                }
-                Spacer()
-            }
-            .help("所有传感器中的最高温度")
-
-            HStack(spacing: 6) {
-                if let chip = SystemInfo.chipName {
-                    Chip(text: chip)
-                }
-                if !monitor.fans.isEmpty {
-                    Chip(text: "\(monitor.fans.count) 个风扇")
-                }
-                if monitor.battery.isPresent {
-                    Chip(text: monitor.battery.isPluggedIn ? "已接电" : "电池供电")
-                }
-            }
-        }
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
-        .padding(.bottom, 2)
-    }
-
-    private var statusColor: Color {
-        monitor.maxTemp > 0 ? Theme.temperature(monitor.maxTemp) : .secondary
-    }
-
-    private var heroIcon: String {
-        switch monitor.maxTemp {
-        case ..<55: return "thermometer.low"
-        case ..<75: return "thermometer.medium"
-        default: return "thermometer.high"
-        }
     }
 
     // MARK: - 风扇
@@ -146,7 +92,7 @@ struct MenuBarView: View {
                 AreaSparkline(values: monitor.history.fanRPM, color: Theme.cool, minSpan: 1_500, floor: 0)
 
                 if helper.canControlFans {
-                    FanControls(monitor: monitor, profileName: profileManager.activeProfile?.name)
+                    FanControls(monitor: monitor)
                         .padding(.top, 2)
                 } else {
                     HelperPrompt(helper: helper, onResult: showResult)
@@ -201,62 +147,72 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - 温度
+    // MARK: - 温度与电池
 
-    private var temperatureGrid: some View {
+    private enum SensorTile: Hashable {
+        case temperature(TempInfo.TempCategory)
+        case battery
+    }
+
+    /// 两列卡片，落单的最后一张占满整行。有电池时电池卡片排在"其他"之前，电池温度显示在电池卡片中
+    private var sensorGrid: some View {
         let grouped = Dictionary(grouping: monitor.temperatures, by: \.category)
-        // 有电池时电池温度显示在电池卡片中
-        let categories = TempInfo.TempCategory.allCases.filter { category in
-            grouped[category] != nil && !(category == .battery && monitor.battery.isPresent)
+        let tiles = TempInfo.TempCategory.allCases.compactMap { category -> SensorTile? in
+            if category == .battery && monitor.battery.isPresent { return .battery }
+            return grouped[category] != nil ? .temperature(category) : nil
         }
-        return LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-            spacing: 10
-        ) {
-            ForEach(categories, id: \.self) { category in
-                TemperatureCard(
-                    category: category,
-                    temps: grouped[category] ?? [],
-                    history: monitor.history.temperatures[category] ?? []
-                )
+        let rows = stride(from: 0, to: tiles.count, by: 2).map { Array(tiles[$0..<min($0 + 2, tiles.count)]) }
+        return VStack(spacing: 10) {
+            ForEach(rows, id: \.self) { row in
+                HStack(spacing: 10) {
+                    ForEach(row, id: \.self) { tile in
+                        switch tile {
+                        case .temperature(let category):
+                            TemperatureCard(
+                                category: category,
+                                temps: grouped[category] ?? [],
+                                history: monitor.history.temperatures[category] ?? []
+                            )
+                        case .battery:
+                            batteryCard
+                        }
+                    }
+                }
+                // 同一行的卡片等高
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
-
-    // MARK: - 电池
 
     private var batteryCard: some View {
         let battery = monitor.battery
         let batteryTemp = monitor.temperatures.filter { $0.category == .battery }.map(\.value).max()
-        return DashCard(icon: "battery.75percent", title: "电池", tint: Theme.good) {
+        return DashCard(
+            icon: battery.isCharging ? "battery.100percent.bolt" : "battery.75percent",
+            title: "电池",
+            tint: Theme.good
+        ) {
             if let batteryTemp {
                 Chip(text: Format.temperature(batteryTemp, decimals: true))
             }
         } content: {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 4) {
-                    BigValue(value: "\(battery.percentage)", unit: "%")
-                    Text(batteryDescription)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                RingGauge(
-                    fraction: Double(battery.percentage) / 100,
-                    color: batteryColor,
-                    icon: battery.isCharging ? "bolt.fill" : (battery.isPluggedIn ? "powerplug.fill" : "leaf.fill")
-                )
-            }
+            BigValue(value: "\(battery.percentage)", unit: "%", size: 22)
+            SegmentMeter(fraction: Double(battery.percentage) / 100, color: batteryColor)
+            Text(batteryDescription)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 
+    /// 半宽卡片放得下的长度
     private var batteryDescription: String {
         let battery = monitor.battery
         if battery.isPluggedIn {
             guard battery.isCharging else { return "已接电 · 未充电" }
-            return Format.duration(minutes: battery.timeToFull).map { "充电中 · 约 \($0) 充满" } ?? "已接电 · 充电中"
+            return Format.duration(minutes: battery.timeToFull).map { "约 \($0)充满" } ?? "已接电 · 充电中"
         }
-        return Format.duration(minutes: battery.timeToEmpty).map { "电池供电 · 剩余约 \($0)" } ?? "电池供电"
+        return Format.duration(minutes: battery.timeToEmpty).map { "剩余约 \($0)" } ?? "电池供电"
     }
 
     private var batteryColor: Color {
@@ -426,7 +382,6 @@ extension FanProfile {
 
 struct FanControls: View {
     @ObservedObject var monitor: FanMonitor
-    let profileName: String?
 
     @State private var sliderValue: Double = 0
     @State private var isDragging = false
@@ -473,13 +428,6 @@ struct FanControls: View {
                     .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
                     .frame(width: 36, alignment: .trailing)
-            }
-
-            if let profileName {
-                Text("方案「\(profileName)」正在控制风扇，手动调速会停用该方案。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .onAppear(perform: sync)
